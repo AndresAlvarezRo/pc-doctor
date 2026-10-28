@@ -223,7 +223,7 @@ def _titulo(tipo: str, ident: str, hw: dict) -> str:
     return TITULOS.get(tipo, ident)
 
 
-def _sensor(l: dict, conds_por_sensor: dict, base: dict, contexto: str | None, nunca_giro: set) -> dict:
+def _sensor(l: dict, conds_por_sensor: dict, base: dict, contexto: str | None, giro_previo: set) -> dict:
     """Un sensor con su estado, la referencia aprendida de ese contexto y si está dentro de la banda."""
     nombre, valor, unidad = l["nombre"], l["valor"], l["unidad"]
     cond = conds_por_sensor.get(nombre)
@@ -244,8 +244,9 @@ def _sensor(l: dict, conds_por_sensor: dict, base: dict, contexto: str | None, n
     elif unidad != "bool":
         s["referencia"] = "fija"
     if unidad == "RPM":
-        s["conector_vacio"] = nombre in nunca_giro
-        s["giro"] = "gira" if valor > 0 else "vacio" if nombre in nunca_giro else "parado"  # vacío: nunca giró; parado: giraba y ahora no
+        # parado: hay registro de que giró y ahora no; vacío: marca 0 y nunca se lo vio girar (conector sin ventilador, o sin historia)
+        s["giro"] = "gira" if valor > 0 else "parado" if nombre in giro_previo else "vacio"
+        s["conector_vacio"] = s["giro"] == "vacio"
     return s
 
 
@@ -283,12 +284,12 @@ def componentes(con, estado: dict) -> dict[str, list[dict]]:
         if n and ESTADO_ORDEN[c["severidad"]] >= ESTADO_ORDEN[conds_por_sensor.get(n, {"severidad": "normal"})["severidad"]]:
             conds_por_sensor[n] = c
     base = {(b["nombre"], b["contexto"]): b for b in con.execute("SELECT * FROM linea_base")}
-    nunca_giro = {r["nombre"] for r in con.execute("SELECT nombre FROM lecturas WHERE unidad='RPM' GROUP BY nombre HAVING MAX(valor) <= 0")}
+    giro_previo = {r["nombre"] for r in con.execute("SELECT nombre FROM lecturas WHERE unidad='RPM' GROUP BY nombre HAVING MAX(valor) > 0")}
     nvme = next((l["nombre"].split("/")[0] for l in lecturas if l["nombre"].startswith("nvme") and l["nombre"][4:5].isdigit()), None)
     hw = _modelos_hardware(con)
     grupos: dict[tuple, list] = defaultdict(list)
     for l in lecturas:
-        grupos[_clasificar(l, nvme)].append(_sensor(l, conds_por_sensor, base, contexto, nunca_giro))
+        grupos[_clasificar(l, nvme)].append(_sensor(l, conds_por_sensor, base, contexto, giro_previo))
     res: dict[str, list] = {t: [] for t in TIPOS_COMPONENTE}
     for (tipo, ident), sensores in sorted(grupos.items()):
         peor = max((s["estado"] for s in sensores), key=ESTADO_ORDEN.get)

@@ -233,6 +233,8 @@ def parsear_smart(dev: str, texto: str) -> list[dict]:
         d = json.loads(texto)
     except ValueError:
         return []
+    if not isinstance(d, dict):  # JSON válido pero que no es un informe (por ejemplo `null` o una lista)
+        return []
     res = []
     ok = (d.get("smart_status") or {}).get("passed")
     if ok is not None:
