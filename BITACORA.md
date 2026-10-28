@@ -478,3 +478,23 @@ El usuario subió el proyecto a GitHub (`origin/main`, un commit inicial) y pidi
 - **Prueba de las pruebas:** se rompió el código a propósito de cuatro maneras y las pruebas detectaron tres (restaurar pisando lo existente, ejecutar en simulación, ignorar el `ctime`). La cuarta, seguir enlaces simbólicos, no se detectaba porque el código tiene **dos** barreras (`followlinks=False` y comprobar que la ruta real esté dentro de Descargas) y con una sola rota la otra protege; rompiendo las dos, la prueba falla.
 - `conftest.py` ahora también vacía el `HOME` temporal antes de cada prueba (antes solo vaciaba la carpeta de datos).
 
+### Fase 2: hook pre-commit (`scripts/pre-commit` y `scripts/instalar-hooks.sh`)
+#### Decisiones
+- **Hook en Python** (más fácil de probar y de leer que en shell), versionado en `scripts/pre-commit`. `scripts/instalar-hooks.sh` lo enlaza en `.git/hooks/pre-commit` con un enlace relativo, se puede repetir sin problema y, si ya había otro hook, lo guarda como `pre-commit.antes`. Ya está instalado en este repositorio.
+- **Bloquea por nombre:** cualquier archivo `.db` (y `-wal`, `-shm`, copias como `doctor.db.antes-de-juego-…`, `.sqlite`), `config.json`, `web_token` y todo lo que esté bajo `datos/` (incluido el enlace simbólico `datos`).
+- **Bloquea por contenido:** tokens de GitHub (`ghp_`, `gho_`…, `github_pat_`), claves de Anthropic, OpenAI, AWS, Slack y Google, claves privadas (`-----BEGIN … PRIVATE KEY-----`), `password=` (y `passwd`, `pwd`, `contraseña`) con un valor, y claves de API, secretos o tokens de 32 caracteres o más asignados a un nombre clave.
+- **Bloquea por tamaño:** más de 1 MiB (1.048.576 bytes; justo 1 MiB pasa).
+- **Bloquea si fallan las pruebas rápidas** (`uv run pytest -m "not lento"`, ~9 s). Si `uv` no está, bloquea con un mensaje claro. Los problemas de archivos se informan sin correr las pruebas.
+- **Se revisa lo que realmente va al commit:** el contenido indexado (no el archivo de trabajo) y solo las líneas **agregadas**, con su número de línea, para no bloquear por cosas que ya estaban. Las bajas no se revisan (sacar un `.db` del repositorio es justo lo que hay que poder hacer). Los renombres cuentan como agregado.
+- **Los secretos se muestran enmascarados** (los primeros 4 caracteres y el largo): el mensaje del hook no filtra el secreto a la terminal ni a los registros.
+- **Ejemplos falsos a propósito:** una línea con `permitir-secreto` en un comentario se ignora, y solo esa línea.
+- **Salida de emergencia:** `git commit --no-verify` sigue funcionando; `CLAUDE.md` pide no usarlo sin preguntar. La variable `PC_DOCTOR_HOOK_SIN_PRUEBAS=1` omite solo el paso de las pruebas y la usan las pruebas del propio hook.
+- **Las 65 pruebas del hook** (`tests/test_hook.py`) usan repositorios git temporales: 13 nombres bloqueados, 10 formas de secreto, 13 casos que no deben bloquearse (código normal y nombres parecidos), solo líneas agregadas, enmascarado, índice contra árbol de trabajo, tamaño en el límite exacto, bajas, varios problemas juntos, pruebas rápidas que fallan o pasan (con un `uv` falso), sin `uv`, el instalador (idempotente, respalda otro hook) y `git commit` de punta a punta (bloquea lo malo, deja pasar lo bueno, `--no-verify`). Están marcadas `lento` (crean repositorios): corren en la suite completa y en CI, no en cada commit.
+#### Errores encontrados y corregidos
+- La prueba de autorrevisión (el hook revisa su propio código y las pruebas del hook) falló: **el hook bloqueaba mi propio archivo de pruebas**, que tiene contraseñas falsas a propósito. Se marcaron esas líneas con `permitir-secreto`.
+- Esa misma prueba reveló un falso positivo real: en `"password: str\n"` la secuencia `\n` de un string de Python contaba como parte del valor. Ahora la barra invertida no forma parte del valor.
+#### Limitaciones
+- Las pruebas rápidas corren sobre el **árbol de trabajo**, no sobre el índice: con un commit parcial (`git add -p`) pueden pasar por cambios que no están en el commit. Es la limitación habitual de los hooks sin `git stash`.
+- Solo conoce las formas de secreto de la lista; un secreto con otra forma (o dividido en partes) no se detecta. No reemplaza revisar lo que se sube.
+- El hook se instala por clon: cada clon nuevo necesita `bash scripts/instalar-hooks.sh`.
+

@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Hook pre-commit de pc-doctor. Bloquea el commit si lo que se agrega:
+
+1. incluye datos o secretos por su nombre: archivos .db (y -wal, -shm, copias), config.json, web_token o cualquier cosa bajo datos/;
+2. contiene algo con forma de secreto en las líneas que se agregan: tokens de GitHub (ghp_, github_pat_...), claves de API
+   largas, `password=` con un valor, claves privadas (-----BEGIN ... PRIVATE KEY-----);
+3. incluye un archivo de más de 1 MiB;
+4. rompe las pruebas rápidas (`uv run pytest -m "not lento"`, unos 8 s).
+
+Si bloquea, dice qué archivo y por qué (los secretos se muestran enmascarados). Se revisa el contenido INDEXADO (lo que va al
+commit) y solo las líneas agregadas, para no bloquear por cosas que ya estaban. Una línea con `permitir-secreto` en un comentario
+se ignora (para ejemplos falsos a propósito). Las pruebas rápidas corren sobre el árbol de trabajo, no sobre el índice.
+
+Se instala con `bash scripts/instalar-hooks.sh`. Saltearlo (bajo tu responsabilidad): `git commit --no-verify`.
+Variable `PC_DOCTOR_HOOK_SIN_PRUEBAS=1`: omite el paso 4 (la usan las pruebas del propio hook).
+"""
+
+import os
+import re
+import subprocess
+import sys
+import time
+
+LIMITE_BYTES = 1024 * 1024  # 1 MiB
+MARCA_PERMITIDA = "permitir-secreto"
+RX_BASE_DE_DATOS = re.compile(r"\.(?:db|sqlite3?)(?:$|[.-])", re.I)  # x.db, x.db-wal, x.db-shm, x.db.antes-de-juego-123, x.sqlite
+
+# (descripción, expresión). En las de "valor" el secreto es el grupo `v`; si no, toda la coincidencia.
+PATRONES = [
+    ("token de GitHub", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b")),
+    ("token de GitHub (granular)", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
+    ("clave de API de Anthropic", re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{20,}")),
+    ("clave de API de OpenAI", re.compile(r"\bsk-[A-Za-z0-9]{32,}\b")),
+    ("clave de acceso de AWS", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("token de Slack", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}")),
+    ("clave de API de Google", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
+    ("clave privada", re.compile(r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY(?: BLOCK)?-----")),
+    ("contraseña con valor", re.compile(
+        r"""(?i)["']?\b(?:password|passwd|pwd|contrase[ñn]a)["']?\s*[=:]\s*["']?(?P<v>[^\s"'<>$#,;(){}\[\]\\]{4,})(?=["'\s,;#]|$)""")),  # sin \: el "\n" de un string no es parte del valor
+    ("clave de API o token largo", re.compile(
+        r"""(?i)\b(?:api[_-]?key|apikey|secret|token|access[_-]?key)["']?\s*[=:]\s*["']?(?P<v>[A-Za-z0-9_\-+/=]{32,})(?=["'\s,;#]|$)""")),
+]
+VALORES_VACIOS = {"none", "null", "true", "false", "str", "string", "bool", "password", "passwd", "contrasena", "contraseña"}
+
+
+def git(*args: str, binario: bool = False):
+    r = subprocess.run(["git", *args], capture_output=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} falló: {r.stderr.decode(errors='replace').strip()}")
+    return r.stdout if binario else r.stdout.decode(errors="replace")
+
+
+def archivos_agregados_o_modificados() -> list[str]:
+    """Rutas que el commit agrega o modifica (los renombres cuentan como agregado; las bajas no se revisan)."""
+    salida = git("diff", "--cached", "--name-only", "--no-renames", "--diff-filter=ACMRT", "-z")
+    return [p for p in salida.split("\0") if p]
+
+
+def bloqueado_por_nombre(ruta: str) -> str | None:
+    partes = ruta.split("/")
+    base = partes[-1]
+    if partes[0] == "datos":
+        return "está bajo datos/ (datos reales del equipo: nunca van al repositorio)"
+    if RX_BASE_DE_DATOS.search(base):
+        return "es una base de datos (.db): contiene datos del equipo"
+    if base == "config.json":
+        return "es config.json: puede tener claves y la configuración personal"
+    if base == "web_token" or base.startswith("web_token."):
+        return "es el token del dashboard: es un secreto"
+    return None
+
+
+def es_binario(datos: bytes) -> bool:
+    return b"\0" in datos[:8000]
+
+
+def lineas_agregadas(ruta: str) -> list[tuple[int, str]]:
+    """(número de línea, texto) de las líneas que este commit agrega al archivo."""
+    diff = git("diff", "--cached", "-U0", "--no-color", "--no-ext-diff", "--", ruta)
+    res, nueva = [], 0
+    for l in diff.splitlines():
+        m = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", l)
+        if m:
+            nueva = int(m.group(1))
+        elif l.startswith("+") and not l.startswith("+++"):
+            res.append((nueva, l[1:]))
+            nueva += 1
+    return res
+
+
+def enmascarar(texto: str) -> str:
+    return f"{texto[:4]}…({len(texto)} caracteres)" if len(texto) > 6 else "…"
+
+
+def buscar_secretos(linea: str) -> list[tuple[str, str]]:
+    if MARCA_PERMITIDA in linea:
+        return []
+    res = []
+    for nombre, rx in PATRONES:
+        for m in rx.finditer(linea):
+            valor = m.groupdict().get("v") or m.group(0)
+            if m.groupdict().get("v") and valor.lower() in VALORES_VACIOS:
+                continue
+            res.append((nombre, enmascarar(valor)))
+    return res
+
+
+def revisar_archivos() -> tuple[list[str], int]:
+    problemas, revisados = [], 0
+    for ruta in archivos_agregados_o_modificados():
+        revisados += 1
+        motivo = bloqueado_por_nombre(ruta)
+        if motivo:
+            problemas.append(f"  {ruta}\n      bloqueado: {motivo}")
+            continue
+        tamano = int(git("cat-file", "-s", f":{ruta}").strip())
+        if tamano > LIMITE_BYTES:
+            problemas.append(f"  {ruta}\n      pesa {tamano / 1048576:.1f} MiB (el límite es 1 MiB): no se versionan archivos grandes")
+            continue
+        if git("ls-files", "-s", "--", ruta).startswith("120000"):  # enlace simbólico: no tiene contenido propio
+            continue
+        if es_binario(git("show", f":{ruta}", binario=True)):
+            continue
+        for numero, linea in lineas_agregadas(ruta):
+            for nombre, mostrado in buscar_secretos(linea):
+                problemas.append(f"  {ruta}:{numero}\n      parece un secreto: {nombre} ({mostrado}). Si es un ejemplo falso, agregá «{MARCA_PERMITIDA}» en un comentario de esa línea")
+    return problemas, revisados
+
+
+def correr_pruebas_rapidas() -> str | None:
+    """None si pasan; si no, el motivo con el final de la salida."""
+    if os.environ.get("PC_DOCTOR_HOOK_SIN_PRUEBAS"):
+        return None
+    raiz = git("rev-parse", "--show-toplevel").strip()
+    try:
+        r = subprocess.run(["uv", "run", "pytest", "-m", "not lento", "-p", "no:cacheprovider", "-q"], cwd=raiz, capture_output=True, text=True)
+    except FileNotFoundError:
+        return "no encontré `uv` en el PATH: no puedo correr las pruebas rápidas (instalalo, o usá --no-verify bajo tu responsabilidad)"
+    if r.returncode == 0:
+        return None
+    cola = "\n".join((r.stdout + r.stderr).strip().splitlines()[-40:])
+    return f"fallan las pruebas rápidas (`uv run pytest -m \"not lento\"`):\n{cola}"
+
+
+def main() -> int:
+    try:
+        problemas, revisados = revisar_archivos()
+    except RuntimeError as e:
+        print(f"pre-commit: no pude revisar el commit: {e}", file=sys.stderr)
+        return 1
+    if problemas:
+        print(f"\npre-commit: commit BLOQUEADO ({len(problemas)} problema(s) en {revisados} archivo(s)):\n", file=sys.stderr)
+        print("\n".join(problemas), file=sys.stderr)
+        print("\nCorregilo y volvé a hacer el commit (o `git commit --no-verify` si estás seguro).", file=sys.stderr)
+        return 1
+    t0 = time.time()
+    motivo = correr_pruebas_rapidas()
+    if motivo:
+        print(f"\npre-commit: commit BLOQUEADO: {motivo}\n", file=sys.stderr)
+        return 1
+    extra = "" if os.environ.get("PC_DOCTOR_HOOK_SIN_PRUEBAS") else f", pruebas rápidas OK en {time.time() - t0:.1f} s"
+    print(f"pre-commit: OK ({revisados} archivo(s) revisados{extra})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
