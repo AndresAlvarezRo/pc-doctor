@@ -1,0 +1,70 @@
+# Pruebas de pc-doctor en cada push y pull request a main: pruebas de Python y compilación del frontend.
+# Las actions están fijadas por SHA de commit (el comentario dice a qué versión corresponde) y el workflow tiene permisos
+# mínimos. Para actualizar una action: resolver el SHA de la versión nueva, comprobar que existe en el repositorio de la
+# action y reemplazarlo junto con el comentario.
+name: Pruebas
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Si llega un push nuevo a la misma rama mientras corre uno anterior, se cancela el anterior
+concurrency:
+  group: pruebas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Pruebas de Python
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.6"      # la misma que se usa en desarrollo
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sincronizar las dependencias (exactamente las de uv.lock)
+        run: uv sync --frozen
+
+      # Sin las pruebas marcadas `local`: leen sensores y procesos reales de la PC de desarrollo
+      - name: Correr las pruebas
+        run: uv run pytest -m "not local"
+
+  frontend:
+    name: Compilar el frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web/frontend
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Instalar Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.22.2"   # la misma que se usa en desarrollo
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+
+      - name: Instalar las dependencias (exactamente las de package-lock.json)
+        run: npm ci --no-fund --no-audit
+
+      - name: Compilar (tsc estricto y vite build)
+        run: npm run build
