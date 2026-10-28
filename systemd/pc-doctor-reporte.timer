@@ -1,0 +1,10 @@
+[Unit]
+Description=pc-doctor: reporte semanal, los domingos a las 20:00
+
+[Timer]
+OnCalendar=Sun *-*-* 20:00:00
+# Si la PC estaba apagada el domingo a las 20:00, corre al prenderla
+Persistent=true
+
+[Install]
+WantedBy=timers.target

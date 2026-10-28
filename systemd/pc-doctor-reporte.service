@@ -1,0 +1,10 @@
+[Unit]
+Description=pc-doctor: reporte semanal de salud (lo redacta Claude; si falla, reporte determinístico)
+
+[Service]
+Type=oneshot
+# Rutas absolutas: systemd no hereda el PATH del usuario. reporte.py busca claude en ~/.local/bin/claude.
+ExecStart=%h/.local/bin/uv run --directory %h/Desktop/Practicas-IA/pc-doctor reporte.py
+Nice=10
+# Debe superar el timeout de Claude (config.json -> reporte.timeout_s, 900 s por defecto) más el plan B
+TimeoutStartSec=1200

@@ -1,0 +1,17 @@
+# Datos y secretos (nunca al repo)
+datos
+config.json
+web_token
+*.db
+*.db.*
+
+# Entornos y dependencias
+venv
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+
+# Compilados y capturas
+web/frontend/dist/
+web/capturas/

@@ -1,0 +1,23 @@
+{
+  "id": "/",
+  "name": "pc-doctor",
+  "short_name": "pc-doctor",
+  "description": "Estado de salud de la PC, valores normales aprendidos, alertas y reportes. Todo local.",
+  "lang": "es-AR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f6f8",
+  "theme_color": "#0b5cc7",
+  "categories": ["utilities", "productivity"],
+  "icons": [
+    { "src": "/icono-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icono-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icono-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icono.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Alertas", "url": "/#alertas", "icons": [{ "src": "/icono-192.png", "sizes": "192x192" }] },
+    { "name": "Reportes", "url": "/#reportes", "icons": [{ "src": "/icono-192.png", "sizes": "192x192" }] }
+  ]
+}

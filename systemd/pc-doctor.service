@@ -1,0 +1,8 @@
+[Unit]
+Description=pc-doctor: recolector pasivo de diagnóstico de la PC
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/uv run --directory %h/Desktop/Practicas-IA/pc-doctor collector.py
+Nice=10
+TimeoutStartSec=120

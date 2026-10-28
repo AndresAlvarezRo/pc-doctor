@@ -1,0 +1,17 @@
+[Unit]
+Description=pc-doctor: dashboard web local (solo 127.0.0.1:8787)
+
+[Service]
+Type=simple
+# Rutas absolutas: systemd no hereda el PATH del usuario. --frozen usa uv.lock tal cual, sin resolver ni descargar nada.
+ExecStart=%h/.local/bin/uv run --frozen --directory %h/Desktop/Practicas-IA/pc-doctor uvicorn web.api:app --host 127.0.0.1 --port 8787 --log-level warning
+WorkingDirectory=%h/Desktop/Practicas-IA/pc-doctor
+Restart=on-failure
+RestartSec=5
+Nice=10
+# En reposo usa unos 65 MB; este tope evita que un error lo deje crecer sin límite
+MemoryMax=400M
+# No se activa NoNewPrivileges: la lectura de SMART usa `sudo -n smartctl` (regla de sudoers de solo lectura).
+
+[Install]
+WantedBy=default.target

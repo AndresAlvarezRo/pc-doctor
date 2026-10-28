@@ -1,0 +1,21 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=pc-doctor
+GenericName=Diagnóstico de la PC
+Comment=Estado de salud de la PC, valores normales aprendidos, alertas y reportes
+Exec=/home/v/.local/bin/uv run --frozen --directory /home/v/Desktop/Practicas-IA/pc-doctor dashboard.py abrir
+Icon=pc-doctor
+Terminal=false
+Categories=System;Monitor;
+Keywords=salud;temperatura;discos;alertas;diagnóstico;
+StartupNotify=false
+Actions=Alertas;Reportes;
+
+[Desktop Action Alertas]
+Name=Ver las alertas
+Exec=/home/v/.local/bin/uv run --frozen --directory /home/v/Desktop/Practicas-IA/pc-doctor dashboard.py abrir alertas
+
+[Desktop Action Reportes]
+Name=Ver los reportes
+Exec=/home/v/.local/bin/uv run --frozen --directory /home/v/Desktop/Practicas-IA/pc-doctor dashboard.py abrir reportes
