@@ -440,3 +440,41 @@ El usuario pidió una app web local (FastAPI + React/Vite/TypeScript + Recharts)
 
 #### Ícono en el escritorio (pedido del usuario)
 - Copia del lanzador en `~/Desktop/pc-doctor.desktop`, ejecutable y marcado como confiable (`gio set ... metadata::trusted true`; sin eso GNOME no deja abrirlo con doble clic). Usa la ruta absoluta del ícono SVG, que el escritorio resuelve con más seguridad que el nombre del tema. Es una copia de `web/pc-doctor.desktop`: si ese archivo cambia, hay que volver a copiarlo.
+
+## Nivel nuevo 5: flujo de git automatizado (pedido del usuario, en fases)
+El usuario subió el proyecto a GitHub (`origin/main`, un commit inicial) y pidió automatizar el flujo de cambios en 4 fases con parada y OK al final de cada una: suite de pruebas permanente, hook pre-commit, regla de commits en `CLAUDE.md` y GitHub Actions. **Excepción a la convención de archivos con punto, autorizada por el usuario:** `.gitignore`, `.git/`, `.github/` y lo que git necesite. Además: no usar `sudo`, no tocar la base real ni los servicios instalados.
+
+### Fase 1: suite de pruebas permanente (`tests/`)
+#### Decisiones
+- **pytest 9.2 y pytest-cov 7.1** como dependencias de desarrollo (`uv add --dev`); `httpx` ya estaba (lo trae `mcp`) y lo usa el cliente de pruebas de FastAPI. Configuración en `pyproject.toml`: `testpaths`, `pythonpath`, dos marcadores y la cobertura. `uv run pytest` corre todo.
+- **Se rescataron las pruebas de verdad, no se reescribieron de cero.** Las de las fases recientes estaban en el scratchpad; las de las primeras etapas (reglas de salud, línea base, deriva, SMART, migración, regresión) ya no existían como archivos, pero cada script que se ejecutó quedó en la transcripción de la conversación, así que se extrajeron de ahí. Las pruebas pasaron de scripts con `print` a funciones de pytest con fixtures y parámetros (los casos repetidos son ahora parametrizados: por ejemplo, 25 líneas de comandos de juegos o 23 parámetros inválidos de la API).
+- **Aislamiento total, en `tests/conftest.py`, antes de importar cualquier módulo del proyecto:** carpeta de datos y `HOME` temporales (así `Path.home()` apunta a una carpeta vacía y nada lee `~/.steam`, `~/.local/bin/claude` ni la base real), `PATH` con los reemplazos de `tests/falsos/` al principio (`notify-send`, `systemd-run`, `systemctl`, `gdbus`, `xdg-open`, `claude`), puerto de pruebas 8795 (nunca el 8787 del dashboard real) y una barrera al iniciar la sesión que aborta todo si la carpeta de datos apuntara a la real. En cada prueba, `salud.leer_lecturas`, `actividad.detectar` y los juegos de Steam están reemplazados por datos sintéticos, salvo en las marcadas `local`.
+- **Marcadores:** `local` (4 pruebas que leen sensores y procesos reales de esta PC; se saltean en CI con `-m "not local"`) y `lento` (189 pruebas que levantan procesos, esperan, crean repositorios git temporales o generan los datos sintéticos grandes; el pre-commit las saltea con `-m "not lento"`).
+- **Datos sintéticos compartidos:** las pruebas de la API usan `web/datos_de_prueba.py`, que ahora acepta un segundo argumento con la cantidad de días (45 en las pruebas, 120 por defecto).
+- **Una prueba específica contra regresiones de seguridad del reporte:** inspecciona el código fuente de cada tool que se le permite a `claude -p` y falla si alguna tiene un efecto (escribir, mover archivos, consultar online); y verifica que toda tool permitida exista en el servidor.
+#### Qué quedó
+- **385 pruebas** en 15 archivos: API (81), hook pre-commit (65), actividad (40), salud (30), dashboard (29), línea base (25), cuarentena (22), reporte (19), notificaciones (18), correlación (16), consultas y retención (15), SMART (9), historial (7), API contra MCP (6) y local (3; hay una cuarta marcada `local` dentro de las de actividad).
+- **Tiempos:** suite completa 25,9 s; subconjunto rápido (`-m "not lento"`, el del pre-commit) 9,4 s con 196 pruebas; como en CI (`-m "not local"`) 381 pruebas en ~22 s. Cinco corridas completas seguidas (cuando eran 298): 5 de 5 sin fallar.
+- **Cobertura total: 72 %** (2817 líneas, 780 sin cubrir). Muy bien cubiertos: `linea_base` 98 %, `correlacion` 96 %, `consultas` 95 %, `salud` 95 %, `web/api` 94 %, `reporte` 90 %, `server` 80 %.
+- **No se tocó nada real:** después de la suite, los reportes y las copias de migración reales siguen en 1 y 1, no hay escuchas de notificaciones vivos, el dashboard y los timers siguen activos y no quedan carpetas temporales.
+#### Errores del código que las pruebas encontraron y se corrigieron
+- `parsear_smart` fallaba con JSON válido que no es un objeto (`null`, una lista): se perdían las lecturas de SMART de todos los discos en esa corrida.
+- El dashboard mostraba un ventilador a 0 RPM **sin historia** como "parado: giraba antes", sin evidencia de que hubiera girado; ahora es "parado" solo si hay registro de que giró, y si no, "conector sin ventilador".
+- Una prueba de la regla del ventilador detenido, escrita antes del arreglo de los conectores vacíos, ya no valía: se adaptó y se agregó el caso del conector vacío.
+#### Problemas de las pruebas mismas
+- Carrera entre pruebas: el servidor HTTP falso de una prueba seguía muriéndose cuando la siguiente lanzaba el suyo en el mismo puerto; la limpieza ahora espera a que el puerto quede libre.
+- `httpx` normaliza los `..` de una URL antes de enviarla, así que `/api/reportes/../../etc/passwd` llegaba como `/etc/passwd`; la prueba ahora verifica que ninguna ruta filtre contenido del sistema.
+- Mi propia comprobación usaba `grep` sobre la línea de resumen con `-q` doble y daba falsos fallos; se usa el código de salida.
+#### Limitaciones (lo que la suite NO cubre)
+- **`seguridad.py` 18 %, `reputacion.py` 25 % y `collector.py` 21 %:** el escáner de procesos y puertos, las consultas de reputación online y el hilo principal del recolector no tienen pruebas permanentes. Hay que dar datos de procesos y de red sintéticos y simular las consultas HTTP.
+- **`server.py` 80 %:** sin pruebas siguen `revision_seguridad` y `marcar_hallazgo`. (`limpiar_descargas_viejas` y `restaurar_cuarentena`, las que mueven archivos del usuario, se cubrieron después: ver más abajo.)
+- `db.py` 55 % (ayudas de hardware), `alertas.py` 58 % (la línea de comandos), `dashboard.py` 79 %.
+- Las pruebas del recolector, de la lectura real de sensores y de SMART por `sudo` solo corren localmente (`local`).
+- El aviso de deprecación de `starlette.testclient` con `httpx` está silenciado en `pyproject.toml`; hay que revisarlo cuando haya un reemplazo estable.
+
+#### Pruebas de las tools que mueven archivos (a pedido del usuario, tras el resumen de la Fase 1)
+- `tests/test_cuarentena.py`, 22 pruebas de `limpiar_descargas_viejas` y `restaurar_cuarentena`, en un `HOME` temporal: la simulación (el valor por defecto) no mueve nada; un archivo recién copiado no cuenta como viejo aunque su `mtime` sea de hace un año (la edad es el máximo de `mtime` y `ctime`); se agrupa por elemento de primer nivel y se acota a 20; al ejecutar se mueve a cuarentena con el contenido idéntico y queda registro en `cuarentena` y `acciones`; nunca se borra nada; dos corridas el mismo día no se pisan (`a.txt` y `a.1.txt`); nunca se tocan archivos fuera de Descargas (ni los de una carpeta de nombre parecido); los enlaces simbólicos no se siguen ni se mueven; restaurar devuelve el archivo idéntico, no pisa uno existente, recrea la carpeta si ya no está y da error con ids inexistentes, ya restaurados o sin archivo; el ciclo completo deja todo como estaba.
+- Como el `ctime` no se puede falsear, para volver "viejos" a archivos recién creados se adelanta el reloj que usa solo el módulo del servidor, sin tocar el reloj del resto del programa.
+- **Prueba de las pruebas:** se rompió el código a propósito de cuatro maneras y las pruebas detectaron tres (restaurar pisando lo existente, ejecutar en simulación, ignorar el `ctime`). La cuarta, seguir enlaces simbólicos, no se detectaba porque el código tiene **dos** barreras (`followlinks=False` y comprobar que la ruta real esté dentro de Descargas) y con una sola rota la otra protege; rompiendo las dos, la prueba falla.
+- `conftest.py` ahora también vacía el `HOME` temporal antes de cada prueba (antes solo vaciaba la carpeta de datos).
+

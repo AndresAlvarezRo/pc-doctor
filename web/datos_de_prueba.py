@@ -3,8 +3,8 @@
 Uso: `uv run python web/datos_de_prueba.py /ruta/carpeta` y después, con esa carpeta:
 `PC_DOCTOR_DATOS=/ruta/carpeta uv run uvicorn web.api:app --host 127.0.0.1 --port 8787` (desde la carpeta del proyecto).
 
-Crea 120 días de lecturas cada 15 minutos (los últimos 30 crudos y el resto como registro diario, igual que la
-retención real), sesiones de juego, una línea base madura, alertas, hallazgos, eventos, reportes, acciones y cambios de
+Crea 120 días (o los que se pidan como segundo argumento) de lecturas cada 15 minutos (los últimos 30 crudos y el resto
+como registro diario, igual que la retención real), sesiones de juego, una línea base madura, alertas, hallazgos, eventos, reportes, acciones y cambios de
 entorno. Los nombres de sensores son los reales de este equipo; los valores son inventados. No usar los datos como diagnóstico.
 """
 
@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 if len(sys.argv) < 2:
-    sys.exit("Uso: web/datos_de_prueba.py CARPETA_DESTINO")
+    sys.exit("Uso: web/datos_de_prueba.py CARPETA_DESTINO [DIAS]   (por defecto 120 días)")
 DESTINO = Path(sys.argv[1]).resolve()
 if (DESTINO / "doctor.db").exists():
     sys.exit(f"{DESTINO}/doctor.db ya existe: no se pisa. Usá una carpeta nueva.")
@@ -29,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import db  # noqa: E402
 import linea_base  # noqa: E402
 
-DIAS, DIAS_CRUDOS, PASO = 120, 30, 900
+DIAS = int(sys.argv[2]) if len(sys.argv) > 2 else 120
+DIAS_CRUDOS, PASO = min(30, DIAS), 900
 H, D = 3600, 86400
 # nombre, categoría, unidad, (reposo, carga, juego) valores centrales, ruido, deriva por día
 SENSORES = [

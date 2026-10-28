@@ -15,3 +15,8 @@ node_modules/
 # Compilados y capturas
 web/frontend/dist/
 web/capturas/
+
+# Pruebas y cobertura
+.pytest_cache/
+.coverage
+htmlcov/

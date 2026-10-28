@@ -12,3 +12,26 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+addopts = "-ra -q"
+filterwarnings = [
+    # starlette avisa que TestClient dejará de usar httpx; no afecta a las pruebas (pendiente: migrar cuando haya reemplazo estable)
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
+markers = [
+    "local: solo tiene sentido en la PC de desarrollo (lee sensores o procesos reales); se saltea en CI con -m 'not local'",
+    "lento: tarda más de ~1 s (datos sintéticos grandes, procesos); el hook pre-commit las saltea con -m 'not lento'",
+]
+
+[tool.coverage.run]
+source = ["."]
+omit = ["tests/*", "web/datos_de_prueba.py", "web/generar_iconos.py", ".venv/*", "venv/*"]

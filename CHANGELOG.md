@@ -25,10 +25,15 @@ _Última actualización: 2026-10-28_
 
 ## Entradas
 
+### 2026-10-28 — Suite de pruebas permanente y dos errores corregidos
+- **Tipo:** solución
+- **Detalle:** 298 pruebas (`uv run pytest`, 21 s) que no tocan la base real ni servicios. Encontraron dos errores: `parsear_smart` perdía las lecturas de SMART de todos los discos si smartctl devolvía JSON que no era un informe, y el dashboard mostraba como "parado" un ventilador a 0 RPM sin historia de haber girado. Ambos corregidos.
+- **Estado:** resuelto
+
 ### 2026-10-28 — Dashboard instalado: servicio, lanzador del menú y enlaces directos (fase 3 de 5)
 - **Tipo:** cambio
 - **Detalle:** `pc-doctor-web.service` (usuario, arranca con la sesión, solo `127.0.0.1:8787`, ~58 MB) y el lanzador "pc-doctor" en el menú, con ícono propio. La tool `abrir_dashboard` abre una sección desde Claude Code. El botón "Ver en el dashboard" de las notificaciones está implementado pero apagado hasta que el usuario lo pruebe.
-- **Estado:** en curso (falta la prueba del botón)
+- **Estado:** resuelto. El usuario probó el botón en su escritorio real y funcionó; quedó activado (`"boton_dashboard": true` en `config.json`, con copia de la configuración anterior).
 
 ### 2026-10-28 — Procesador y GPU a 95-96 °C jugando a Crimson Desert
 - **Tipo:** error (térmico, a confirmar)
