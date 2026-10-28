@@ -498,3 +498,7 @@ El usuario subió el proyecto a GitHub (`origin/main`, un commit inicial) y pidi
 - Solo conoce las formas de secreto de la lista; un secreto con otra forma (o dividido en partes) no se detecta. No reemplaza revisar lo que se sube.
 - El hook se instala por clon: cada clon nuevo necesita `bash scripts/instalar-hooks.sh`.
 
+### Fase 3: regla de commits en `CLAUDE.md`
+- Se agregó la sección "Flujo de git" con las reglas pedidas (correr `uv run pytest` al terminar un cambio coherente; commit en español, imperativo, primera línea corta y, si hace falta, un párrafo con el porqué; prefijos `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`; el commit incluye la entrada de `BITACORA.md`; `git push` después; sin commit si las pruebas fallan; nunca `push --force`, `reset --hard` ni reescribir historial sin preguntar; mostrar `git log --oneline origin/main..HEAD` antes de cada push). Agregué por mi cuenta la línea `Co-Authored-By` al final del mensaje (la instrucción de atribución de las sesiones de Claude Code) y la mención del hook y de no usar `--no-verify` sin preguntar.
+- Además se actualizó el resto de `CLAUDE.md`, que había quedado viejo: describía dos partes del sistema y 4 módulos; ahora lista las tres partes, todos los módulos, las convenciones del dashboard, la sección "Pruebas" (marcadores y las reglas de aislamiento que debe seguir una prueba nueva) y la excepción de los archivos con punto para git.
+
