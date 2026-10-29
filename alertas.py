@@ -15,6 +15,7 @@ from pathlib import Path
 
 import dashboard
 import db
+import plataforma
 from db import log
 
 MAX_LINEAS = 3  # cuántos hallazgos se detallan en una notificación; el resto se resume
@@ -74,6 +75,12 @@ def _lanzar_escucha(titulo: str, mensaje: str, critica: bool, seccion: str) -> b
 
 
 def notificar(titulo: str, mensaje: str, critica: bool = False, seccion: str | None = None, forzar_boton: bool = False) -> bool:
+    """Muestra una notificación de escritorio (Linux: `notify-send`; Windows: toast). Devuelve True si se pudo enviar.
+    Con `seccion` ofrece el botón "Ver en el dashboard" (ver `_notificar_linux` y plataforma/windows_notificaciones.py)."""
+    return plataforma.actual().notificar(titulo, mensaje, critica, seccion, forzar_boton)
+
+
+def _notificar_linux(titulo: str, mensaje: str, critica: bool = False, seccion: str | None = None, forzar_boton: bool = False) -> bool:
     """Muestra una notificación de escritorio con `notify-send`. Devuelve True si se pudo enviar.
 
     Con `seccion` (ej. "alerta:4", "hallazgo:7", "reportes") agrega un botón "Ver en el dashboard" que abre esa sección;

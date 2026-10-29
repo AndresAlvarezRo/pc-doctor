@@ -1348,3 +1348,59 @@ _2026-10-29 · prueba_
 - **Pruebas:** exportar, importar en una base vacía y exportar da archivos idénticos (`-->`, comillas, separadores unicode, bloques de código con `#`, ids con huecos, entradas sin dividir). Mutaciones detectadas: cupo de invariantes en `contexto`, sangría de las marcas, escape de `--` y el id al importar. La suite pasó de 541 a 650 pruebas.
   <!-- item {"id":395,"tipo":"prueba","vigencia":"vigente","fecha":"2026-10-29","resumen":"Ahorro medido: 40 % menos caracteres con `contexto(n=6)` y 2 detalles que con secciones enteras","modulos":["memoria"],"archivos":["memoria.py"]} -->
 - **Medición en tres tareas** (regla de temperatura en `salud.py`, tools permitidas del reporte, bug en el frontend), con las mismas consultas. Antes (`buscar_bitacora` con `completo`, secciones enteras): 4855, 9240 y 1296 caracteres. Ahora (`contexto(archivo, n=6)` más 2 `detalle_bitacora`): 2629, 4088 y 2490, es decir 46 %, 56 % y −92 %: 40 % en total. Con `n=12` por defecto el total baja solo 19 %. En el frontend la búsqueda vieja encontró una sola sección chica y ganó; lo que `contexto` agrega es que las invariantes y los pendientes del módulo aparecen siempre.
+
+## Windows: fase 1, capa de plataforma y lectura de hardware
+
+### Capa de plataforma
+_2026-10-29 · decision_
+<!-- entrada {"id":90,"seccion":"Windows: fase 1, capa de plataforma y lectura de hardware","titulo":"Capa de plataforma","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":396,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"`plataforma/linux.py` es un adaptador sobre el código existente, no el código movido","modulos":["datos","plataforma","salud"],"archivos":["plataforma/__init__.py","plataforma/linux.py"],"prueba":"tests/test_plataforma.py::test_los_dos_backends_ofrecen_toda_la_interfaz"} -->
+- **Linux delega en las funciones originales** (`collector._recolectar_hardware_linux`, `db._temperatura_cpu_linux`, `alertas._notificar_linux`...): mover el código habría roto las pruebas que las reemplazan por nombre de módulo.
+  - El resto del programa llama a `plataforma.actual().<función>`; una prueba exige que `linux` y `windows` ofrezcan toda la `INTERFAZ`.
+  - `plataforma/` no importa `db` ni los demás módulos al cargarse (solo adentro de las funciones).
+
+### Lecturas en Windows
+_2026-10-29 · decision_
+<!-- entrada {"id":91,"seccion":"Windows: fase 1, capa de plataforma y lectura de hardware","titulo":"Lecturas en Windows","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":397,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Contadores de GPU y disco por clases CIM y no por `Get-Counter`: los nombres se traducen al idioma","modulos":["windows"],"archivos":["plataforma/windows.py","plataforma/windows_sensores.py"],"prueba":"tests/test_windows_sensores.py::test_los_motores_de_gpu_se_usan_solo_si_nadie_mas_trae_el_uso"} -->
+- **CIM en lugar de `Get-Counter`:** `\GPU Engine(*)` y `\PhysicalDisk(*)` cambian de nombre en Windows en español. Se usan `Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine` y `..._PerfDisk_PhysicalDisk`, leídas una vez, 1 s de espera y otra vez (las tasas necesitan dos muestras).
+  - Una llamada a PowerShell (`-EncodedCommand`, sin ventana) para el hardware y otra para los sensores; los pasos de una corrida reusan la lectura de sensores 30 s.
+  - El uso de GPU por contadores solo se emite si ni LibreHardwareMonitor ni `nvidia-smi` lo traen (si no, la alerta se duplicaría).
+
+### Lo que Windows no mide no se inventa
+_2026-10-29 · decision_
+<!-- entrada {"id":92,"seccion":"Windows: fase 1, capa de plataforma y lectura de hardware","titulo":"Lo que Windows no mide no se inventa","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":398,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Sin carga promedio (None), sin CPU desde ACPI y `Warning` de un disco sin traducir a SMART","modulos":["salud","windows"],"archivos":["plataforma/windows_sensores.py","plataforma/windows_sistema.py"],"prueba":"tests/test_windows_sensores.py::test_la_temperatura_de_la_cpu_prefiere_el_paquete_y_sin_sensor_es_none"} -->
+- **Carga:** `plataforma.carga()` devuelve None en Windows y la regla de carga no aplica.
+  - **Temperatura de CPU:** solo de LibreHardwareMonitor; las zonas térmicas ACPI se guardan como `placa` (`acpi/...`) y no se usan como CPU.
+  - **Discos:** `HealthStatus` Healthy/Unhealthy → `smart_ok` 1/0; Warning no se traduce. Temperatura y desgaste de `Get-StorageReliabilityCounter` solo si Windows los da (0 °C = no informado).
+  - **Eventos:** el registro System, críticos/errores/advertencias, con el id en el mensaje (`[41 crit] ...`); `DistributedCOM 10016` se descarta como ruido conocido.
+
+### Cuarentena, esquema y notificaciones en Windows
+_2026-10-29 · decision_
+<!-- entrada {"id":93,"seccion":"Windows: fase 1, capa de plataforma y lectura de hardware","titulo":"Cuarentena, esquema y notificaciones en Windows","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":399,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Cuarentena por mtime solo en Windows; `software.origen` admite registro y winget; toast con botón por protocolo","modulos":["alertas","datos","mcp","windows"],"archivos":["db.py","plataforma/windows.py","plataforma/windows_notificaciones.py","server.py"],"prueba":"tests/test_plataforma.py::test_el_esquema_acepta_los_origenes_de_windows"} -->
+- **Cuarentena:** en Windows `st_ctime` es la creación; la edad usa solo `st_mtime` (decisión del usuario). Linux sigue con el mayor de mtime y ctime.
+  - **Esquema:** el `CHECK` de `software.origen` suma `registro` y `winget` en las bases nuevas; las bases de Linux ya creadas conservan el viejo y no insertan esos orígenes.
+  - **Toast:** XML con `activationType="protocol"` y la URL del dashboard; sin proceso residente. Viene activo salvo `"boton_dashboard": false` explícito (en Linux viene apagado hasta probarlo). La identidad `pc-doctor` se registra en HKCU, sin administrador y sin dependencias.
+
+### Sin verificar en un Windows real
+_2026-10-29 · limitacion_
+<!-- entrada {"id":94,"seccion":"Windows: fase 1, capa de plataforma y lectura de hardware","titulo":"Sin verificar en un Windows real","fecha":"2026-10-29","tipo":"limitacion"} -->
+
+<!-- item {"id":400,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"Todo lo de Windows se probó solo con salidas simuladas en Linux; nada corrió en un Windows real","modulos":["windows"],"archivos":["plataforma/windows.py"]} -->
+- **No verificado:** los scripts de PowerShell (sintaxis y nombres de clases CIM), el espacio WMI de LibreHardwareMonitor, `winreg`, `ctypes` de la ventana en primer plano, el toast y la tarea programada.
+  - El formato real de `winget list` (tabla por columnas) se supuso; si cambia, `paquetes_winget` devuelve vacío sin romper.
+
+### Pendientes de Windows
+_2026-10-29 · nota_
+<!-- entrada {"id":95,"seccion":"Windows: fase 1, capa de plataforma y lectura de hardware","titulo":"Pendientes de Windows","fecha":"2026-10-29","tipo":"nota"} -->
+
+<!-- item {"id":401,"tipo":"pendiente","vigencia":"vigente","fecha":"2026-10-29","resumen":"Pendiente: seguridad (fase 2) y `reporte.py` (killpg, rename, `~/.local/bin`, PATH con `:`) no portados","modulos":["reporte","seguridad","windows"],"archivos":["reporte.py","seguridad.py"]} -->
+- **Seguridad:** `revisar_y_guardar` devuelve "omitido" en Windows hasta la fase 2.
+  - **Reporte:** `reporte.py` usa `os.killpg`, `tmp.rename`, `~/.local/bin/claude` y un PATH con `:`; se porta con el instalador (fase 6).
+  - **Reclasificar historial** (`actividad.nombres_de_proceso_de_juegos`) sigue siendo de Steam en Linux.

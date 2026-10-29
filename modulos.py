@@ -22,6 +22,9 @@ MODULOS: dict[str, list[str]] = {
                 "tests/test_bitacora*.py"],
     "datos": ["db.py", "consultas.py", "collector.py", "tests/test_consultas.py", "tests/test_historial.py", "tests/test_local.py"],
     "mcp": ["server.py", "tests/test_cuarentena.py"],
+    "plataforma": ["plataforma/__init__.py", "plataforma/comun.py", "plataforma/linux.py", "tests/test_plataforma.py"],
+    "windows": ["plataforma/windows*.py", "tests/test_windows_*.py"],
+    "instalador": [],   # instalar.ps1, habilitar-sensores.ps1, empaquetar.py y las plantillas (fases 3 a 6)
     "infra": ["systemd/**", "habilitar-sensores.sh", "pyproject.toml", "uv.lock"],
     "git": ["scripts/**", ".github/**", ".gitignore", "tests/conftest.py", "tests/ayudas.py", "tests/falsos/**", "tests/test_hook.py"],
     "sistema": [],      # lo que está fuera del repo (servicios de otros proyectos, overrides, sudoers, /etc): se resuelve por la ruta

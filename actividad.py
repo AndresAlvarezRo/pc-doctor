@@ -15,6 +15,7 @@ from pathlib import Path
 import psutil
 
 import db
+import plataforma
 from db import log
 
 # ---------- firmas (único lugar que hay que tocar para reconocer más juegos) ----------
@@ -168,7 +169,12 @@ def _clientes_gamemode() -> list[str]:
 
 
 def detectar() -> list[dict]:
-    """Actividad en curso: lista de {tipo, detalle, desde, firma, pid}, uno por juego distinto.
+    """Actividad en curso: lista de {tipo, detalle, desde, firma, pid}, uno por juego distinto (cada sistema tiene su detector)."""
+    return plataforma.actual().detectar_juegos()
+
+
+def _detectar_linux() -> list[dict]:
+    """Actividad en curso en Linux (Steam, Proton, Wine, gamescope, gamemode), por la línea de comandos de los procesos.
 
     `desde` es la hora real de inicio del proceso (la más antigua entre los que forman ese juego).
     """

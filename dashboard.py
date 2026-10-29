@@ -14,6 +14,8 @@ import time
 import urllib.error
 import urllib.request
 
+import plataforma
+
 log = logging.getLogger("pc-doctor")
 
 PUERTO = int(os.environ.get("PC_DOCTOR_PUERTO", "8787"))
@@ -53,6 +55,11 @@ def activo(timeout: float = 1.5) -> bool:
 
 def iniciar(espera_s: float = ESPERA_ARRANQUE_S) -> str:
     """Se asegura de que el dashboard esté corriendo. Devuelve 'activo', 'iniciado', 'no_instalado' o 'no_arranco'."""
+    return plataforma.actual().iniciar_dashboard(espera_s)
+
+
+def _iniciar_linux(espera_s: float) -> str:
+    """Arranca pc-doctor-web.service (systemd de usuario) y espera a que responda."""
     if activo():
         return "activo"
     try:
@@ -71,12 +78,6 @@ def iniciar(espera_s: float = ESPERA_ARRANQUE_S) -> str:
     return "no_arranco"
 
 
-MENSAJES = {
-    "no_instalado": "El servicio del dashboard no está instalado (falta pc-doctor-web.service).",
-    "no_arranco": "El servicio del dashboard no arrancó. Mirá: journalctl --user -u pc-doctor-web",
-}
-
-
 def abrir(seccion: str = "") -> dict:
     """Arranca el dashboard si hace falta y abre el navegador en la sección pedida."""
     url = url_de(seccion)
@@ -84,12 +85,12 @@ def abrir(seccion: str = "") -> dict:
     res = {"url": url, "servicio": estado, "abierto": False}
     if estado in ("activo", "iniciado"):
         try:
-            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            plataforma.actual().abrir_url(url)
             res["abierto"] = True
         except OSError as e:
             res["error"] = f"no pude abrir el navegador: {e}"
     else:
-        res["error"] = MENSAJES[estado]
+        res["error"] = plataforma.actual().mensaje_sin_servicio(estado)
     return res
 
 
@@ -102,8 +103,7 @@ if __name__ == "__main__":
             sys.exit(2)
         if not r["abierto"]:
             # lanzado desde el menú no hay terminal: se avisa con una notificación
-            subprocess.run(["notify-send", "-a", "pc-doctor", "-i", "dialog-warning", "No se pudo abrir pc-doctor", r.get("error", "")],
-                           capture_output=True, timeout=10)
+            plataforma.actual().avisar("No se pudo abrir pc-doctor", r.get("error", ""))
         print(r)
         sys.exit(0 if r["abierto"] else 1)
     print(__doc__)

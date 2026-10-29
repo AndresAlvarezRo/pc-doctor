@@ -15,9 +15,11 @@ import psutil
 import actividad
 import db
 import linea_base
+import plataforma
 import salud
 import seguridad
 from db import ejecutar, log
+from plataforma.comun import PROVEEDORES_PCI  # noqa: F401  (la tabla se comparte con el backend de Windows)
 
 MAX_EVENTOS = 50
 RETENCION_DIAS = 30
@@ -27,10 +29,7 @@ RETENCION_DIAS = 30
 
 def registrar_workspace(con) -> int:
     """Devuelve el id del workspace de esta máquina, creándolo si no existe."""
-    try:
-        machine_id = Path("/etc/machine-id").read_text().strip()
-    except OSError:
-        machine_id = socket.gethostname()
+    machine_id = plataforma.actual().id_maquina()
     fila = con.execute("SELECT id FROM workspace WHERE machine_id=?", (machine_id,)).fetchone()
     if fila:
         return fila["id"]
@@ -41,7 +40,20 @@ def registrar_workspace(con) -> int:
     return cur.lastrowid
 
 
+def _id_maquina_linux() -> str:
+    """Identificador de esta máquina: /etc/machine-id, o el nombre del equipo si no existe."""
+    try:
+        return Path("/etc/machine-id").read_text().strip()
+    except OSError:
+        return socket.gethostname()
+
+
 def leer_distro() -> str:
+    """Nombre del sistema operativo (Linux: la distro; Windows: edición, versión y build)."""
+    return plataforma.actual().distro()
+
+
+def _leer_distro_linux() -> str:
     """Nombre bonito de la distro desde /etc/os-release."""
     try:
         for linea in Path("/etc/os-release").read_text().splitlines():
@@ -85,12 +97,6 @@ def paquetes_snap() -> list[tuple[str, str, str]]:
     return res
 
 
-# IDs de proveedor PCI conocidos; cualquier otro se informa con su ID crudo.
-PROVEEDORES_PCI = {
-    "10de": "NVIDIA", "1002": "AMD", "1022": "AMD", "8086": "Intel",
-    "1a03": "ASPEED", "15ad": "VMware", "1af4": "Red Hat (virtio)", "1234": "QEMU",
-    "5143": "Qualcomm", "13b5": "ARM", "1414": "Microsoft", "80ee": "VirtualBox",
-}
 
 
 def _version_modulo(modulo: str) -> str | None:
@@ -163,6 +169,11 @@ def _dmi(nombre: str) -> str:
 
 def recolectar_hardware() -> list[tuple[str, str, str, dict]]:
     """Devuelve filas (tipo, marca, modelo, detalle) de hardware."""
+    return plataforma.actual().hardware()
+
+
+def _recolectar_hardware_linux() -> list[tuple[str, str, str, dict]]:
+    """Hardware de Linux: /proc/cpuinfo, lspci, lsblk y /sys/class/dmi."""
     filas = []
     # CPU: x86 expone "vendor_id"/"model name"; ARM y otros se resuelven con lscpu
     modelo, vendor = "", ""
@@ -217,13 +228,13 @@ def recolectar_hardware() -> list[tuple[str, str, str, dict]]:
 
 def snapshot_entorno(con, ws: int) -> bool:
     """Guarda un snapshot nuevo solo si cambió el hash de (kernel + driver GPU + paquetes)."""
-    kernel = platform.release()
+    kernel = plataforma.actual().kernel()
     hw = recolectar_hardware()
     drivers = sorted(
         f"{d.get('driver')}:{d.get('version_driver', '')}"
         for t, _, _, d in hw if t == "gpu"
     )
-    paquetes = paquetes_apt() + paquetes_flatpak() + paquetes_snap()
+    paquetes = plataforma.actual().paquetes()
     base = "\n".join([kernel, ",".join(drivers)] + sorted(f"{o}|{n}|{v}" for n, v, o in paquetes))
     h = hashlib.sha256(base.encode()).hexdigest()
 
@@ -234,7 +245,7 @@ def snapshot_entorno(con, ws: int) -> bool:
     if ultimo and ultimo["hash"] == h:
         return False
 
-    escritorio = os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get("DESKTOP_SESSION") or ""
+    escritorio = plataforma.actual().escritorio()
     cur = con.execute(
         "INSERT INTO snapshot_entorno (workspace_id, tomado_en, distro, kernel, escritorio, hash) "
         "VALUES (?,?,?,?,?,?)",
@@ -258,7 +269,7 @@ def guardar_metricas(con, ws: int) -> int:
     """Toma una muestra de métricas y el top 5 de procesos. Devuelve el id de la métrica."""
     cpu = psutil.cpu_percent(interval=1)
     try:
-        libre = psutil.disk_usage("/").free / 2**30
+        libre = psutil.disk_usage(plataforma.actual().raiz_sistema()).free / 2**30
     except OSError:
         libre = None
     cur = con.execute(
@@ -266,7 +277,7 @@ def guardar_metricas(con, ws: int) -> int:
         "disco_libre_gb, load_1m) VALUES (?,?,?,?,?,?,?,?,?)",
         (ws, db.ahora(), cpu, psutil.virtual_memory().percent, psutil.swap_memory().percent,
          db.temperatura_cpu(), db.temperatura_gpu(),
-         round(libre, 2) if libre is not None else None, os.getloadavg()[0]),
+         round(libre, 2) if libre is not None else None, plataforma.actual().carga()),
     )
     mid = cur.lastrowid
     con.executemany(
@@ -282,12 +293,21 @@ SEVERIDADES = {"0": "emerg", "1": "alert", "2": "crit", "3": "err"}
 
 
 def guardar_eventos(con) -> int:
-    """Guarda hasta MAX_EVENTOS errores de journalctl desde el último ts guardado."""
+    """Guarda hasta MAX_EVENTOS errores del sistema (journal en Linux, log System en Windows) desde el último ts guardado."""
     fila = con.execute("SELECT MAX(ts) AS m FROM eventos").fetchone()
     desde = (fila["m"] or db.ahora() - 3600) + 1
-    salida = ejecutar(["journalctl", "-p", "err", "--since", f"@{desde}", "-o", "json",
-                       "-n", str(MAX_EVENTOS), "--no-pager"])
     n = 0
+    for ts, origen, severidad, mensaje in plataforma.actual().eventos(desde, MAX_EVENTOS):
+        con.execute("INSERT INTO eventos (ts, origen, severidad, mensaje) VALUES (?,?,?,?)", (ts, origen, severidad, mensaje))
+        n += 1
+    return n
+
+
+def _eventos_journal(desde: int, maximo: int) -> list[tuple[int, str, str, str]]:
+    """Errores de journalctl desde el epoch `desde`: (ts, origen, severidad, mensaje)."""
+    salida = ejecutar(["journalctl", "-p", "err", "--since", f"@{desde}", "-o", "json",
+                       "-n", str(maximo), "--no-pager"])
+    res = []
     for linea in (salida or "").splitlines():
         try:
             e = json.loads(linea)
@@ -295,15 +315,11 @@ def guardar_eventos(con) -> int:
             msg = e.get("MESSAGE", "")
             if isinstance(msg, list):  # mensaje binario
                 msg = bytes(msg).decode("utf-8", "replace")
-            con.execute(
-                "INSERT INTO eventos (ts, origen, severidad, mensaje) VALUES (?,?,?,?)",
-                (ts, e.get("SYSLOG_IDENTIFIER") or e.get("_COMM") or "?",
-                 SEVERIDADES.get(str(e.get("PRIORITY")), "err"), str(msg)[:500]),
-            )
-            n += 1
+            res.append((ts, e.get("SYSLOG_IDENTIFIER") or e.get("_COMM") or "?",
+                        SEVERIDADES.get(str(e.get("PRIORITY")), "err"), str(msg)[:500]))
         except (ValueError, KeyError, TypeError) as ex:
             log.warning("evento del journal ilegible: %s", ex)
-    return n
+    return res
 
 
 # ---------- retención ----------

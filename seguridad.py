@@ -17,6 +17,7 @@ import psutil
 
 import db
 import alertas
+import plataforma
 import reputacion
 from db import log
 
@@ -311,6 +312,8 @@ def guardar(con, resultado: dict) -> dict:
 
 def revisar_y_guardar(con) -> dict:
     """Paso del recolector: actualiza listas (máx. 1 vez al día), escanea y guarda."""
+    if plataforma.ES_WINDOWS:  # el escaneo mira /proc y /dev/input: el de Windows llega en la fase 2
+        return {"omitido": "el escaneo de seguridad de Windows todavía no está implementado"}
     inicio = db.ahora()
     listas = actualizar_listas(con)
     res = escanear()

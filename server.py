@@ -16,6 +16,7 @@ import correlacion
 import dashboard
 import db
 import memoria
+import plataforma
 import linea_base
 import reputacion
 import salud
@@ -152,7 +153,7 @@ def temperatura_cpu() -> dict:
     if gpu is not None:
         res["gpu_c"] = gpu
     if res["cpu_c"] is None:
-        res["aviso"] = "No se pudo leer la temperatura (¿falta ejecutar sensors-detect?)."
+        res["aviso"] = plataforma.actual().aviso_sin_temperatura()
     return res
 
 
@@ -273,7 +274,7 @@ def limpiar_descargas_viejas(dias: int = 90, simular: bool = True) -> dict:
                 if p.is_symlink() or not p.is_file():
                     continue
                 st = p.stat()
-                if max(st.st_mtime, st.st_ctime) < corte and p.resolve().is_relative_to(raiz_real):
+                if plataforma.actual().fecha_archivo(st) < corte and p.resolve().is_relative_to(raiz_real):
                     candidatos.append((p, st.st_size))
             except OSError:
                 continue

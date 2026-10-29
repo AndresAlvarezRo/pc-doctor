@@ -311,7 +311,7 @@ def entorno(desde: str = "7d"):
 def limitaciones():
     """Qué no se puede medir y por qué, qué sensores siguen aprendiendo y cuánto les falta."""
     with conexion() as con:
-        return {"no_disponible": estado_vivo(con)["no_disponible"], "fijas": consultas.LIMITACIONES_FIJAS,
+        return {"no_disponible": estado_vivo(con)["no_disponible"], "fijas": consultas.limitaciones_fijas(),
                 "aprendizaje": consultas.aprendizaje(con)}
 
 

@@ -13,10 +13,12 @@ from pathlib import Path
 
 import psutil
 
+import plataforma
+
 log = logging.getLogger("pc-doctor")
 
 # PC_DOCTOR_DATOS permite apuntar a otra carpeta (las pruebas usan una base temporal, nunca la real)
-DIR_DATOS = Path(os.environ.get("PC_DOCTOR_DATOS") or Path.home() / ".local" / "share" / "pc-doctor")
+DIR_DATOS = Path(os.environ.get("PC_DOCTOR_DATOS") or plataforma.actual().dir_datos())
 RUTA_DB = DIR_DATOS / "doctor.db"
 DIR_CUARENTENA = DIR_DATOS / "cuarentena"
 
@@ -46,7 +48,7 @@ CREATE INDEX IF NOT EXISTS idx_hardware_snap ON hardware(snapshot_id);
 CREATE TABLE IF NOT EXISTS software (
     snapshot_id INTEGER NOT NULL REFERENCES snapshot_entorno(id),
     nombre TEXT NOT NULL, version TEXT,
-    origen TEXT NOT NULL CHECK (origen IN ('apt','flatpak','snap'))
+    origen TEXT NOT NULL CHECK (origen IN ('apt','flatpak','snap','registro','winget'))
 );
 CREATE INDEX IF NOT EXISTS idx_software_snap ON software(snapshot_id);
 CREATE TABLE IF NOT EXISTS metricas (
@@ -287,6 +289,11 @@ def _max_temp_chip(chip: dict) -> float | None:
 
 
 def temperatura_cpu() -> float | None:
+    """Temperatura actual de la CPU en °C, o None si el sistema no la expone (Linux: `sensors -j`; Windows: LibreHardwareMonitor)."""
+    return plataforma.actual().temperatura_cpu()
+
+
+def _temperatura_cpu_linux() -> float | None:
     """Temperatura actual de la CPU en °C, vía `sensors -j` (o psutil como respaldo)."""
     salida = ejecutar(["sensors", "-j"])
     if salida:
@@ -347,6 +354,11 @@ def top_procesos(n: int = 5, espera: float = 0.5) -> list[dict]:
 
 
 def carpeta_descargas() -> Path | None:
+    """Carpeta de descargas del usuario, o None si no existe (Linux: ~/Descargas o ~/Downloads; Windows: la carpeta Descargas)."""
+    return plataforma.actual().carpeta_descargas()
+
+
+def _carpeta_descargas_linux() -> Path | None:
     """Devuelve ~/Descargas o ~/Downloads, el que exista (prioriza Descargas)."""
     for nombre in ("Descargas", "Downloads"):
         p = Path.home() / nombre

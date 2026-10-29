@@ -19,6 +19,7 @@ import correlacion
 import db
 import linea_base
 import memoria
+import plataforma
 from db import ejecutar, log
 from reputacion import cargar_config
 
@@ -287,7 +288,7 @@ def _sistema(fila=None) -> list[dict]:
         cpu, ram, swap, carga = fila["cpu_pct"], fila["ram_pct"], fila["swap_pct"], fila["load_1m"]
     else:
         cpu, ram, swap, carga = (psutil.cpu_percent(interval=0.5), psutil.virtual_memory().percent,
-                                 psutil.swap_memory().percent, psutil.getloadavg()[0])
+                                 psutil.swap_memory().percent, plataforma.actual().carga())
     res = []
     if cpu is not None:
         res.append(_l("cpu", "cpu/uso", cpu, "%"))
@@ -303,12 +304,14 @@ def _sistema(fila=None) -> list[dict]:
 def leer_lecturas(fila=None) -> list[dict]:
     """Todas las lecturas actuales del equipo. Cada fuente que falle se omite sin romper el resto."""
     res = []
-    fuentes = [("hwmon", _hwmon), ("gpu_amd", _gpu_amd), ("discos", _discos), ("smart", _smart), ("sistema", lambda: _sistema(fila))]
+    fuentes = [("sensores", plataforma.actual().leer_sensores), ("sistema", lambda: _sistema(fila))]
     for nombre, fn in fuentes:
         try:
             res += fn()
         except Exception:
             log.exception("falló la lectura de %s", nombre)
+    if not plataforma.actual().nvidia_smi_aplica(res):
+        return res
     nv = ejecutar(["nvidia-smi", "--query-gpu=temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,fan.speed",
                    "--format=csv,noheader,nounits"])
     return res + (parsear_nvidia(nv) if nv else [])
@@ -401,10 +404,11 @@ def condiciones(con, lecturas: list[dict], cfg: dict, activas: set[str], en_base
 def condiciones_eventos(con, ahora: int) -> dict[str, dict]:
     """Eventos graves del journal de las últimas 24 h (uno por tipo, con el más reciente)."""
     res = {}
+    patrones = plataforma.actual().patrones_evento(PATRONES_EVENTO)
     filas = con.execute("SELECT ts, origen, mensaje FROM eventos WHERE ts >= ? ORDER BY ts DESC",
                         (ahora - VENTANA_EVENTOS_S,)).fetchall()
     for f in filas:
-        for tipo, cat, sev, texto, rx in PATRONES_EVENTO:
+        for tipo, cat, sev, texto, rx in patrones:
             clave = f"evento:{tipo}"
             if clave not in res and rx.search(f"{f['origen']}: {f['mensaje']}"):
                 res[clave] = {"clave": clave, "categoria": cat, "nombre": tipo, "severidad": sev, "valor": f["ts"],

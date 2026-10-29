@@ -16,6 +16,7 @@ import actividad
 import db
 import linea_base
 import memoria
+import plataforma
 import reputacion
 import salud
 
@@ -83,6 +84,16 @@ def sesiones(con, tipo: str = "", dias: int = 30, limite: int = 60) -> tuple[lis
 
 def no_disponible(lecturas: list[dict]) -> list[str]:
     """Qué no se puede medir ahora en este equipo y qué falta para poder hacerlo."""
+    return plataforma.actual().no_disponible(lecturas)
+
+
+def limitaciones_fijas() -> list[dict]:
+    """Las limitaciones que no cambian con los datos, propias de este sistema."""
+    return plataforma.actual().limitaciones()
+
+
+def _no_disponible_linux(lecturas: list[dict]) -> list[str]:
+    """Qué no se puede medir ahora en Linux y qué falta para poder hacerlo."""
     res = []
     if not any(l["categoria"] == "placa" and l["unidad"] == "mV" for l in lecturas):
         res.append("Voltajes de la placa: el kernel no expone un sensor compatible")
