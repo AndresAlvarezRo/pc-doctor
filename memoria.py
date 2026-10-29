@@ -13,8 +13,11 @@ existen, devuelven vacío. Las funciones reciben la conexión y no la cierran.
 
 import json
 import re
+import socket
 import sqlite3
+import sys
 from datetime import date
+from pathlib import Path
 
 import db
 
@@ -458,3 +461,126 @@ def changelog_abierto(con, n: int = 30) -> dict:
     total = con.execute("SELECT COUNT(*) FROM changelog WHERE estado='abierto'").fetchone()[0]
     filas = con.execute("SELECT * FROM changelog WHERE estado='abierto' ORDER BY fecha DESC, id DESC LIMIT ?", (n,)).fetchall()
     return {"total": total, "abiertos": [_fila_changelog(f) for f in filas]}
+
+
+# ---------- exportación a markdown (BITACORA.md y CHANGELOG.md) ----------
+# Solo se exportan la bitácora y el changelog. `memoria` y `hechos_conocidos` son datos personales: no salen de la base ni van a git.
+
+RAIZ = Path(__file__).resolve().parent
+AVISO_GENERADO = ("> Archivo **generado** desde la tabla `{tabla}` de `doctor.db` con `uv run memoria.py --exportar` (el hook pre-commit lo "
+                  "regenera). **No se edita a mano**: los cambios se hacen con `{tool}` y se vuelve a exportar.")
+INTRO_BITACORA = "Registro cronológico de las decisiones del proyecto. Cada entrada indica su fecha y su tipo."
+INTRO_CHANGELOG = ("Historial de diagnósticos, errores, soluciones y cambios del equipo, de la entrada más nueva a la más vieja. "
+                   "La identidad del equipo se calcula al exportar, desde el último snapshot de entorno.")
+SECCION_INTRO = "Introducción"
+TIPO_CHANGELOG_TEXTO = {"error": "error", "solucion": "solución", "cambio": "cambio", "observacion": "observación"}
+
+
+def exportar_bitacora(con) -> str:
+    """Markdown de la bitácora: una sección `##` por `seccion` (o `##` + `###` si trae ` / `) y un encabezado por entrada, con su fecha y tipo."""
+    out = ["# Bitácora de pc-doctor", "", AVISO_GENERADO.format(tabla="bitacora", tool="registrar_bitacora"), "", INTRO_BITACORA]
+    anterior: list[str] = []
+    for f in con.execute("SELECT * FROM bitacora ORDER BY id"):
+        ruta = f["seccion"].split(" / ")
+        for i, parte in enumerate(ruta):
+            if anterior[:i + 1] != ruta[:i + 1]:
+                out += ["", f"{'#' * (i + 2)} {parte}"]
+        anterior = ruta
+        if f["titulo"] == SECCION_INTRO:          # el texto que va antes de los subtítulos de la sección, sin encabezado propio
+            out += ["", f["contenido"]]
+            continue
+        out += ["", f"{'#' * (len(ruta) + 2)} {f['titulo']}", f"_{f['fecha']} · {f['tipo']}_", "", f["contenido"]]
+    return "\n".join(out) + "\n"
+
+
+def _disco(h, d) -> str:
+    modelo = (h["modelo"] or h["marca"] or "disco").strip()
+    return f"{modelo} {d.get('tamano', '')} ({d.get('dev', '?')})".replace("  ", " ")
+
+
+def identidad(con) -> list[tuple[str, str]]:
+    """(campo, valor) de la identidad del equipo, calculada desde el último snapshot de entorno y su hardware. [] si no hay snapshot."""
+    s = con.execute("SELECT * FROM snapshot_entorno ORDER BY tomado_en DESC, id DESC LIMIT 1").fetchone()
+    if not s:
+        return []
+    hw = [(h, json.loads(h["detalle"] or "{}")) for h in con.execute("SELECT * FROM hardware WHERE snapshot_id=?", (s["id"],))]
+    por_tipo = lambda t: [(h, d) for h, d in hw if h["tipo"] == t]
+    filas = [("Hostname", socket.gethostname()), ("SO", f"{s['distro']}, escritorio {s['escritorio']}"), ("Kernel", s["kernel"])]
+    for h, d in por_tipo("cpu")[:1]:
+        modelo = re.sub(r"\s+\d+-Core Processor$", "", h["modelo"])
+        filas.append(("CPU", f"{modelo} ({d.get('nucleos_fisicos', '?')} núcleos, {d.get('hilos', '?')} hilos, {d.get('arquitectura', '?')})"))
+    for h, d in por_tipo("gpu")[:1]:
+        modelo = re.sub(r"\s*\(rev [0-9a-f]+\)", "", re.sub(r"^Advanced Micro Devices, Inc\. \[AMD/ATI\] ", "", h["modelo"]))
+        extra = ", ".join(x for x in (f"driver `{d['driver']}`" if d.get("driver") else "", f"Mesa {d['mesa'].split('~')[0]}" if d.get("mesa") else "") if x)
+        filas.append(("GPU", f"{modelo}{', ' + extra if extra else ''}"))
+    for h, d in por_tipo("ram")[:1]:
+        filas.append(("RAM", f"{str(d.get('total_gb', '?')).replace('.', ',')} GB ({'sin swap' if not d.get('swap_gb') else 'swap ' + str(d['swap_gb']) + ' GB'})"))
+    discos = [_disco(h, d) for h, d in hw if h["tipo"] == "disco" or d.get("dev")]
+    if discos:
+        filas.append(("Discos", "; ".join(discos)))
+    for h, d in por_tipo("mother")[:1]:
+        filas.append(("Placa madre", f"{h['marca']} {h['modelo']}".strip() + (f", BIOS {d['bios']}" if d.get("bios") else "")))
+    cuentas = con.execute("SELECT origen, COUNT(*) n FROM software WHERE snapshot_id=? GROUP BY origen ORDER BY origen", (s["id"],)).fetchall()
+    if cuentas:
+        filas.append(("Paquetes", f"{sum(c['n'] for c in cuentas)} (" + ", ".join(f"{c['origen']} {c['n']}" for c in cuentas) + ")"))
+    filas.append(("_Snapshot_", db.iso(s["tomado_en"])))
+    return filas
+
+
+def exportar_changelog(con) -> str:
+    out = ["# Changelog de la PC", "", AVISO_GENERADO.format(tabla="changelog", tool="registrar_changelog` y `resolver_changelog"), "", INTRO_CHANGELOG, "",
+           "## Identidad actual", ""]
+    filas = identidad(con)
+    if filas:
+        out += ["| Campo | Valor |", "|---|---|"] + [f"| {c} | {v.replace('|', '/')} |" for c, v in filas]
+    else:
+        out.append("_Todavía no hay un snapshot de entorno._")
+    out += ["", "## Entradas"]
+    for f in con.execute("SELECT * FROM changelog ORDER BY id DESC"):
+        titulo = f["titulo"] or corto(f["detalle"].split("\n")[0], 90)
+        estado = "resuelto" + (f" ({f['resuelto_en']})" if f["resuelto_en"] else "") if f["estado"] == "resuelto" else "abierto"
+        out += ["", f"### {f['fecha']} — {titulo}", f"- **Tipo:** {TIPO_CHANGELOG_TEXTO[f['tipo']]}", f"- **Componente:** {f['componente']}",
+                f"- **Detalle:** {f['detalle']}", f"- **Estado:** {estado}"]
+    return "\n".join(out) + "\n"
+
+
+def exportar(con, destino: Path = RAIZ) -> dict:
+    """Escribe BITACORA.md y CHANGELOG.md en `destino`. No escribe lo que no tiene tabla todavía; devuelve cuántas entradas exportó."""
+    res = {}
+    for tabla, archivo, funcion in (("bitacora", "BITACORA.md", exportar_bitacora), ("changelog", "CHANGELOG.md", exportar_changelog)):
+        if not existe(con, tabla):
+            continue
+        texto = funcion(con)
+        destino.mkdir(parents=True, exist_ok=True)
+        if not (destino / archivo).exists() or (destino / archivo).read_text(encoding="utf-8") != texto:   # no toca el archivo si no cambió
+            (destino / archivo).write_text(texto, encoding="utf-8")
+        res[archivo] = con.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0]
+    return res
+
+
+def main(argv: list[str]) -> int:
+    if "--exportar" not in argv:
+        print("Uso: uv run memoria.py --exportar [--destino CARPETA]   (regenera BITACORA.md y CHANGELOG.md desde la base)", file=sys.stderr)
+        return 2
+    destino = RAIZ
+    if "--destino" in argv:
+        i = argv.index("--destino")
+        if i + 1 >= len(argv):
+            print("--destino necesita una carpeta.", file=sys.stderr)
+            return 2
+        destino = Path(argv[i + 1]).expanduser().resolve()
+    if not db.RUTA_DB.exists():
+        print("No hay base de datos: no hay nada que exportar.")
+        return 0
+    con = sqlite3.connect(f"file:{db.RUTA_DB}?mode=ro", uri=True, timeout=10)    # solo lectura: exportar nunca cambia la base
+    con.row_factory = sqlite3.Row
+    try:
+        res = exportar(con, destino)
+    finally:
+        con.close()
+    print("Exportado en", destino, "->", ", ".join(f"{a} ({n} entradas)" for a, n in res.items()) or "nada (las tablas no existen todavía)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

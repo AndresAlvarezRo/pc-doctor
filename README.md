@@ -4,7 +4,7 @@ Sistema de diagnóstico de la PC (pensado para Zorin OS / Ubuntu): mide la salud
 
 Tres partes:
 1. **Recolector** (`collector.py`): lo corre un systemd user timer cada 15 minutos y al arrancar; tarda ~3 segundos. Guarda sensores, métricas, eventos, snapshots del entorno y hallazgos de seguridad en SQLite.
-2. **Servidor MCP** (`server.py`, FastMCP): 23 tools para Claude Code, entre ellas consultas de historial, estado en vivo, alertas, posibles causas y acciones acotadas.
+2. **Servidor MCP** (`server.py`, FastMCP): 35 tools para Claude Code, entre ellas consultas de historial, estado en vivo, alertas, posibles causas y acciones acotadas.
 3. **Dashboard** (`web/`): app local en `http://localhost:8787` (solo `127.0.0.1`) con FastAPI y React, que muestra lo mismo que el MCP porque comparten las mismas funciones.
 
 Los datos viven en `~/.local/share/pc-doctor/` (visible desde el proyecto como `datos/`). El registro detallado de cada decisión, error y limitación está en [`BITACORA.md`](BITACORA.md); lo que se observó del equipo, en [`CHANGELOG.md`](CHANGELOG.md).
@@ -35,7 +35,7 @@ Todo lo marcado como listo está probado (ver [Desarrollo](#desarrollo)); cómo 
 | Dashboard, fase 4 | Acciones y gestión con token local y verificación de origen (marcar alertas, limpiezas sin root, restaurar, configuración) | **Pendiente** |
 | Dashboard, fase 5 | Botón "Diagnosticar con Claude" en cada alerta | **Pendiente** (opcional) |
 | Diagnóstico automático | Diagnóstico hecho por Claude disparado por una alerta crítica (tabla `diagnosticos`) | **Pendiente** |
-| Calidad | 385 pruebas, hook pre-commit y GitHub Actions | Listo |
+| Calidad | 519 pruebas, hook pre-commit y GitHub Actions | Listo |
 | Cobertura de pruebas | El escáner de seguridad, la reputación online y el hilo principal del recolector no tienen pruebas permanentes | **Pendiente** |
 
 **Lo que pc-doctor encontró en esta PC** (detalle en `CHANGELOG.md`): sectores defectuosos y errores CRC en el SSD `sdb`, un ventilador (`fan7`) con velocidad errática y temperaturas de 95-96 °C en CPU y GPU jugando.
@@ -51,7 +51,8 @@ Todo lo marcado como listo está probado (ver [Desarrollo](#desarrollo)); cómo 
 | `web/` | API (`api.py`), frontend React (`frontend/`), datos de prueba, íconos y el script de compilación |
 | `systemd/` | Unidades de usuario: recolector, reporte semanal y dashboard |
 | `tests/`, `scripts/` | Suite de pruebas; hook pre-commit y su instalador |
-| `BITACORA.md`, `CHANGELOG.md` | Decisiones y errores del proyecto; observaciones y cambios del equipo |
+| `memoria.py`, `migrar_memoria.py` | Memoria en tablas de `doctor.db` (esquema, búsqueda, exportación a markdown) y su migración desde los archivos |
+| `BITACORA.md`, `CHANGELOG.md` | **Generados** desde las tablas `bitacora` y `changelog`: decisiones y errores del proyecto; observaciones y cambios del equipo |
 
 ## Instalación
 Requisitos: `uv`, `python3`, `lm-sensors` y `lshw` (opcionales: `nvidia-smi`, `flatpak`, `snap`).
@@ -107,6 +108,26 @@ Opcional: `bash web/construir.sh` (compila el frontend; necesita Node, ver [Desa
 | `correlacionar(alerta_id)` | Posibles causas de una alerta o de un hallazgo (`hallazgo:N`); coincidencias, no causas demostradas |
 | `ultimo_reporte()` y `reportes(n)` | El último reporte semanal y el historial |
 | `abrir_dashboard(seccion)` | Abre el dashboard en el navegador |
+| `recordar(tema, texto, tipo)`, `buscar_memoria(consulta, n)`, `memoria_reciente(n)`, `olvidar(id)` | Memoria del agente (hechos, decisiones, preferencias, observaciones) con búsqueda de texto completo; `olvidar` marca como inactivo, no borra |
+| `hechos_conocidos(aplica_a)`, `agregar_hecho_conocido(...)`, `retirar_hecho_conocido(id)` | Lo que el usuario declaró como sabido. **Solo se agregan o retiran si el usuario lo pide en la conversación** |
+| `registrar_bitacora(...)`, `buscar_bitacora(consulta, n)` | Decisiones, errores, pruebas y limitaciones del proyecto |
+| `registrar_changelog(...)`, `resolver_changelog(id, detalle)`, `changelog_abierto()` | Historia de la PC: errores, soluciones y cambios, con su estado |
+
+## Memoria
+La memoria vive en cuatro tablas de `doctor.db` y se consulta por el MCP, en vez de cargarse entera en cada sesión desde archivos:
+
+| Tabla | Qué guarda |
+|---|---|
+| `memoria` | Lo que el agente aprende (hecho, decisión, preferencia u observación), con `origen` (agente o usuario) y búsqueda de texto completo (FTS5, sin distinguir acentos). Personal: no se exporta |
+| `hechos_conocidos` | Lo que **el usuario** declara como sabido, con a qué se aplica (`aplica_a`: sensor, disco, alerta) y una fecha de revisión opcional. Personal: no se exporta |
+| `bitacora` | Decisiones, errores, pruebas y limitaciones del proyecto, por sección |
+| `changelog` | Errores, soluciones y cambios de la PC, con estado (abierto o resuelto) |
+
+**Un hecho conocido silencia lo conocido, no lo nuevo.** Una alerta cubierta por un hecho no se vuelve a notificar ni a recomendar en el reporte semanal mientras no empeore (sube la severidad, o el valor se aleja de lo normal: cualquier aumento en los contadores de SMART, más del 5 % en el resto). Si el hecho vence, deja de silenciar y aparece en el reporte como "para revisar". El dashboard muestra el hecho junto a cada alerta cubierta y tiene las secciones "Hechos conocidos" y "Changelog" (solo lectura).
+
+**Exportar:** `BITACORA.md` y `CHANGELOG.md` se generan desde las tablas con `uv run memoria.py --exportar` (con `--destino CARPETA` para ver el resultado sin pisar los archivos). No se editan a mano: el hook pre-commit los regenera y los agrega al commit. La "Identidad actual" del changelog se calcula del último snapshot de entorno y su hardware. Las tablas se crean al escribir por primera vez; las lecturas nunca las crean.
+
+**Migrar** (una sola vez, ya hecho en esta PC): `uv run migrar_memoria.py` simula y `--ejecutar` escribe; exige una copia previa de la base (`doctor.db.antes-de-memoria-*`) y que las tablas estén vacías.
 
 ## Alertas de salud
 Cada corrida lee los sensores (se guardan 30 días en la tabla `lecturas`) y los compara con unas reglas de valores normales; si algo se sale, envía **una** notificación de escritorio agrupada.
@@ -196,7 +217,7 @@ La base de datos no se borra; para empezar de cero eliminá `~/.local/share/pc-d
 ### Pruebas
 ```bash
 uv sync                          # instala también las dependencias de desarrollo (pytest, pytest-cov)
-uv run pytest                    # todo (385 pruebas, ~26 s)
+uv run pytest                    # todo (519 pruebas, ~45 s)
 uv run pytest -m "not lento"     # lo rápido (~9 s): es lo que corre el hook en cada commit
 uv run pytest -m "not local"     # lo que corre GitHub Actions
 uv run pytest --cov              # con cobertura
@@ -208,11 +229,11 @@ uv run pytest --cov              # con cobertura
 ```bash
 bash scripts/instalar-hooks.sh   # una vez por clon; se puede repetir
 ```
-Bloquea el commit si se agrega una base `.db`, `config.json`, `web_token` o algo bajo `datos/`; si una línea agregada parece un secreto (tokens de GitHub, claves de API, `password=` con un valor, claves privadas); si un archivo pesa más de 1 MiB; o si fallan las pruebas rápidas. Dice qué archivo y por qué (los secretos se muestran enmascarados). Un ejemplo falso a propósito se marca con `permitir-secreto` en un comentario de esa línea. Salida de emergencia: `git commit --no-verify`.
+Antes de revisar, regenera `BITACORA.md` y `CHANGELOG.md` desde la base y los agrega al commit (`PC_DOCTOR_HOOK_SIN_EXPORTAR=1` lo saltea). Bloquea el commit si se agrega una base `.db`, `config.json`, `web_token` o algo bajo `datos/`; si una línea agregada parece un secreto (tokens de GitHub, claves de API, `password=` con un valor, claves privadas); si un archivo pesa más de 1 MiB; o si fallan las pruebas rápidas. Dice qué archivo y por qué (los secretos se muestran enmascarados). Un ejemplo falso a propósito se marca con `permitir-secreto` en un comentario de esa línea. Salida de emergencia: `git commit --no-verify`.
 
 ### Flujo de commits
 1. Se termina un cambio coherente (no un archivo suelto) y se corre `uv run pytest`.
-2. Si pasan, se hace el commit: mensaje en español, en imperativo, con una primera línea corta y, si hace falta, un párrafo con el porqué. Prefijos: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`. El commit incluye la entrada de `BITACORA.md`, si la hay.
+2. Si pasan, se hace el commit: mensaje en español, en imperativo, con una primera línea corta y, si hace falta, un párrafo con el porqué. Prefijos: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`. `BITACORA.md` y `CHANGELOG.md` los regenera el hook desde la base (las decisiones se registran con `registrar_bitacora`).
 3. Antes del push se revisa `git log --oneline origin/main..HEAD` y después se hace `git push`.
 4. Si las pruebas fallan, no hay commit. Nunca `git push --force`, `git reset --hard` ni reescribir historial sin preguntar.
 

@@ -7,12 +7,16 @@
 3. incluye un archivo de más de 1 MiB;
 4. rompe las pruebas rápidas (`uv run pytest -m "not lento"`, unos 8 s).
 
+Antes de revisar, regenera BITACORA.md y CHANGELOG.md desde las tablas de doctor.db (`uv run memoria.py --exportar`) y los agrega al
+commit, así que lo exportado también pasa por las revisiones de arriba. Si la exportación falla avisa y sigue (no bloquea el commit).
+
 Si bloquea, dice qué archivo y por qué (los secretos se muestran enmascarados). Se revisa el contenido INDEXADO (lo que va al
 commit) y solo las líneas agregadas, para no bloquear por cosas que ya estaban. Una línea con `permitir-secreto` en un comentario
 se ignora (para ejemplos falsos a propósito). Las pruebas rápidas corren sobre el árbol de trabajo, no sobre el índice.
 
 Se instala con `bash scripts/instalar-hooks.sh`. Saltearlo (bajo tu responsabilidad): `git commit --no-verify`.
 Variable `PC_DOCTOR_HOOK_SIN_PRUEBAS=1`: omite el paso 4 (la usan las pruebas del propio hook).
+Variable `PC_DOCTOR_HOOK_SIN_EXPORTAR=1`: omite la regeneración de BITACORA.md y CHANGELOG.md.
 """
 
 import os
@@ -142,7 +146,31 @@ def correr_pruebas_rapidas() -> str | None:
     return f"fallan las pruebas rápidas (`uv run pytest -m \"not lento\"`):\n{cola}"
 
 
+def regenerar_memoria() -> str | None:
+    """Regenera BITACORA.md y CHANGELOG.md desde la base y los agrega al índice. None si no hizo falta o salió bien; si falla, el aviso.
+
+    Solo actúa en un repositorio que tiene `memoria.py` (los repositorios de prueba no) y sin PC_DOCTOR_HOOK_SIN_EXPORTAR."""
+    if os.environ.get("PC_DOCTOR_HOOK_SIN_EXPORTAR"):
+        return None
+    raiz = git("rev-parse", "--show-toplevel").strip()
+    if not os.path.exists(os.path.join(raiz, "memoria.py")):
+        return None
+    try:
+        r = subprocess.run(["uv", "run", "memoria.py", "--exportar"], cwd=raiz, capture_output=True, text=True, timeout=120)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return f"no pude exportar la memoria ({type(e).__name__})"
+    if r.returncode != 0:
+        return f"la exportación de la memoria falló: {(r.stderr or r.stdout).strip()[-300:]}"
+    existentes = [a for a in ("BITACORA.md", "CHANGELOG.md") if os.path.exists(os.path.join(raiz, a))]
+    if existentes:
+        git("add", "--", *existentes)
+    return None
+
+
 def main() -> int:
+    aviso = regenerar_memoria()
+    if aviso:
+        print(f"pre-commit: aviso: {aviso}. BITACORA.md y CHANGELOG.md pueden estar desactualizados.", file=sys.stderr)
     try:
         problemas, revisados = revisar_archivos()
     except RuntimeError as e:
