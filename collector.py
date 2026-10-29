@@ -14,6 +14,7 @@ import psutil
 
 import actividad
 import db
+import diagnostico
 import linea_base
 import plataforma
 import salud
@@ -371,6 +372,7 @@ def main() -> int:
     con = db.conectar()
     ws = registrar_workspace(con)
     con.commit()
+    resultados = {}
     for nombre, fn, args in (
         ("metricas", guardar_metricas, (con, ws)),
         ("eventos", guardar_eventos, (con,)),
@@ -384,6 +386,11 @@ def main() -> int:
         r = paso(nombre, fn, *args)
         con.commit()
         log.info("%s: %s", nombre, r)
+        resultados[nombre] = r
+    # el diagnóstico de alertas va al final y no espera: lanza el trabajo aparte y sigue
+    r = paso("diagnostico", diagnostico.disparar, con, (resultados.get("salud") or {}).get("empeoradas", []))
+    con.commit()
+    log.info("diagnostico: %s", r)
     con.close()
     return 0
 

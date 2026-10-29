@@ -24,6 +24,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import agente
 import alertas
 import consultas
 import memoria
@@ -32,8 +33,11 @@ import plataforma
 import reputacion
 from db import log
 
+# El bloque de seguridad de `claude -p` vive en agente.py; estos nombres se conservan acá para quien los usaba desde este módulo.
+from agente import (INTEGRADAS_PROHIBIDAS, PREFIJO_MCP, _grupo_de_procesos, _matar_arbol, clasificar_error, config_mcp,  # noqa: F401
+                    ruta_claude, ruta_uv)
+
 # ---------- seguridad: qué puede usar el modelo (único lugar donde se decide) ----------
-PREFIJO_MCP = "mcp__pc-doctor__"
 HERRAMIENTAS_LECTURA = [  # todas de solo lectura; ninguna escribe en la base ni mueve archivos
     "estado_salud", "alertas_salud", "linea_base_aprendida", "medias_diarias", "historial", "sesiones_actividad",
     "linea_de_tiempo", "correlacionar", "hallazgos_seguridad", "cambios_entorno", "perfil_entorno", "errores_recientes",
@@ -51,8 +55,9 @@ HERRAMIENTAS_PROHIBIDAS = [
     "registrar_bitacora", "registrar_changelog", "resolver_changelog", "registrar_identidad",
     # bitácora del proyecto: es del código, no de la PC (el reporte no la necesita)
     "buscar_bitacora", "contexto", "detalle_bitacora", "pendientes", "marcar_superada",
+    # remediación: los diagnósticos y planes anteriores son texto generado por un modelo (otro canal para arrastrar instrucciones)
+    "diagnosticos", "planes", "detalle_plan", "recetas", "aprobar_plan", "rechazar_plan",
 ]
-INTEGRADAS_PROHIBIDAS = ["Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent"]
 
 CONFIG_REPORTE = {"habilitado": True, "modelo": "sonnet", "max_turns": 30, "timeout_s": 900, "claude": ""}
 RESUMEN_MAX = 180
@@ -129,100 +134,21 @@ def leer(con, fecha: str) -> dict | None:
     return {**f, "contenido": ruta.read_text()}
 
 
-def ruta_claude(cfg: dict) -> str | None:
-    """Ruta absoluta de claude (systemd no hereda el PATH del usuario); None si no existe."""
-    for c in (cfg.get("claude"), str(Path.home() / ".local" / "bin" / "claude"), str(Path.home() / ".local" / "bin" / "claude.exe"), shutil.which("claude")):
-        if c and Path(c).is_file() and os.access(c, os.X_OK):
-            return c
-    return None
-
-
-def ruta_uv() -> str:
-    """uv del PATH; si no, el de ~/.local/bin; en Windows, también el que deja instalar.ps1 junto al programa."""
-    propio = Path(__file__).resolve().parent / "herramientas" / "uv.exe"
-    return shutil.which("uv") or (str(propio) if propio.is_file() else str(Path.home() / ".local" / "bin" / "uv"))
-
-
-def config_mcp() -> str:
-    """JSON con SOLO el servidor de pc-doctor (el resto de los MCP de la cuenta, como web o Drive, no se cargan)."""
-    uv = ruta_uv()
-    srv = {"command": uv, "args": ["run", "--directory", str(Path(__file__).resolve().parent), "server.py"]}
-    if os.environ.get("PC_DOCTOR_DATOS"):
-        srv["env"] = {"PC_DOCTOR_DATOS": os.environ["PC_DOCTOR_DATOS"]}
-    return json.dumps({"mcpServers": {"pc-doctor": srv}})
-
-
-def construir_comando(claude: str, cfg: dict) -> list[str]:
-    """El prompt NO va en los argumentos (las opciones variádicas lo absorberían): se pasa por stdin."""
-    cmd = [claude, "-p", "--output-format", "text", "--max-turns", str(cfg["max_turns"]),
-           "--permission-mode", "dontAsk",          # lo que no esté pre-aprobado se deniega, no se pregunta
-           "--tools", "",                           # sin herramientas integradas (Bash, Write, Edit, web...)
-           "--strict-mcp-config", "--mcp-config", config_mcp(),
-           "--allowedTools", ",".join(PREFIJO_MCP + h for h in HERRAMIENTAS_LECTURA),
-           "--disallowedTools", ",".join([PREFIJO_MCP + h for h in HERRAMIENTAS_PROHIBIDAS] + INTEGRADAS_PROHIBIDAS),
-           "--no-session-persistence", "--setting-sources", "project"]  # no carga ajustes ni hooks del usuario
-    if cfg.get("modelo"):
-        cmd += ["--model", cfg["modelo"]]
-    return cmd
-
-
 # ---------- ejecución de Claude ----------
 
-def clasificar_error(codigo: int, texto: str) -> str:
-    t = texto.lower()
-    if re.search(r"not logged in|please run /login|invalid api key|authentication|unauthorized|\b401\b|oauth", t):
-        return "claude no tiene sesión iniciada (ejecutá `claude` y hacé /login)"
-    if re.search(r"usage limit|rate limit|limit reached|quota|credit balance|\b429\b|overloaded|too many requests", t):
-        return "límite de uso de Claude alcanzado"
-    if re.search(r"enotfound|econnrefused|econnreset|network|fetch failed|unable to connect|getaddrinfo|connection error", t):
-        return "sin conexión a internet"
-    return f"error de claude (código {codigo}): {' '.join(texto.split())[:150]}"
-
-
-def _grupo_de_procesos() -> dict:
-    """Argumentos de Popen para que claude y el servidor MCP que lanza formen un grupo que se pueda matar junto."""
-    if plataforma.actual().NOMBRE == "windows":
-        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200) | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
-    return {"start_new_session": True}
-
-
-def _matar_arbol(p: subprocess.Popen) -> None:
-    if plataforma.actual().NOMBRE == "windows":
-        subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True, timeout=30)
-    else:
-        os.killpg(p.pid, signal.SIGKILL)
+def construir_comando(claude: str, cfg: dict) -> list[str]:
+    return agente.construir_comando(claude, cfg, HERRAMIENTAS_LECTURA, HERRAMIENTAS_PROHIBIDAS)
 
 
 def pedir_a_claude(cfg: dict) -> tuple[str | None, str | None, float]:
     """(texto, motivo_del_fallo, segundos). Si texto es None, `motivo` explica por qué hay que usar el plan B."""
-    claude = ruta_claude(cfg)
-    if not claude:
-        return None, "no encontré el ejecutable de claude", 0.0
-    entorno = dict(os.environ)
-    entorno.update({"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"})  # sin CLAUDE.md ni memoria
-    base = "" if plataforma.actual().NOMBRE == "windows" else "/usr/bin:/bin"
-    entorno["PATH"] = f"{Path.home() / '.local' / 'bin'}{os.pathsep}{entorno.get('PATH', base)}"
-    cwd = db.DIR_DATOS / "reportes"
-    cwd.mkdir(parents=True, exist_ok=True)  # carpeta neutra: sin CLAUDE.md del proyecto
-    t0 = time.time()
-    try:
-        p = subprocess.Popen(construir_comando(claude, cfg), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             text=True, cwd=cwd, env=entorno, **_grupo_de_procesos())
-    except OSError as e:
-        return None, f"no pude ejecutar claude: {e}", 0.0
-    try:
-        salida, err = p.communicate(PROMPT.format(fecha=datetime.now().strftime("%Y-%m-%d")), timeout=cfg["timeout_s"])
-    except subprocess.TimeoutExpired:
-        _matar_arbol(p)  # mata también al servidor MCP que lanzó claude
-        p.communicate()
-        return None, f"tiempo agotado ({cfg['timeout_s']} s)", time.time() - t0
-    seg = time.time() - t0
-    if p.returncode != 0:
-        return None, clasificar_error(p.returncode, f"{err}\n{salida}"), seg
-    texto = salida.strip()
-    if len(texto) < MINIMO_CARACTERES or texto.count("\n## ") < 3:
-        return None, f"respuesta vacía o incompleta ({len(texto)} caracteres): {' '.join(texto.split())[:100]}", seg
-    return texto, None, seg
+    salida, motivo, seg = agente.pedir(PROMPT.format(fecha=datetime.now().strftime("%Y-%m-%d")), cfg, HERRAMIENTAS_LECTURA,
+                                       HERRAMIENTAS_PROHIBIDAS, "reportes")
+    if salida is None:
+        return None, motivo, seg
+    if len(salida) < MINIMO_CARACTERES or salida.count("\n## ") < 3:
+        return None, f"respuesta vacía o incompleta ({len(salida)} caracteres): {' '.join(salida.split())[:100]}", seg
+    return salida, None, seg
 
 
 # ---------- plan B: reporte determinístico ----------

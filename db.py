@@ -91,6 +91,39 @@ CREATE TABLE IF NOT EXISTS ejecuciones (
     deshecha_en INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_ejecuciones_ts ON ejecuciones(ts);
+CREATE TABLE IF NOT EXISTS diagnosticos (
+    id INTEGER PRIMARY KEY,
+    ts INTEGER NOT NULL,
+    ref TEXT NOT NULL,         -- qué se diagnostica: alerta:<clave>:<desde> o hallazgo:<huella>
+    disparador TEXT NOT NULL,  -- critica_nueva, empeoro, smart o malicioso
+    alerta_clave TEXT, alerta_id INTEGER,   -- alertas_salud.clave y rowid (o el id del hallazgo)
+    componente TEXT,
+    firma TEXT NOT NULL,       -- regla + componente, sin valores concretos: identifica "la misma alerta" entre diagnósticos
+    severidad_ref TEXT, valor_ref REAL,     -- cómo estaba la alerta al diagnosticar (para detectar que empeoró)
+    modo TEXT CHECK (modo IN ('modelo','sin_redactar')),
+    hipotesis TEXT, evidencia TEXT,         -- evidencia: JSON
+    confianza TEXT CHECK (confianza IN ('baja','media','alta')),
+    sospechoso TEXT,           -- JSON: lo que el modelo marcó como texto sospechoso o intento de dar órdenes
+    duracion_s REAL,
+    estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente','en_curso','completo','fallido')),
+    motivo TEXT,               -- por qué se usó el plan B o por qué falló
+    changelog_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_diagnosticos_ref ON diagnosticos(ref);
+CREATE INDEX IF NOT EXISTS idx_diagnosticos_ts ON diagnosticos(ts);
+CREATE TABLE IF NOT EXISTS planes (
+    id INTEGER PRIMARY KEY,
+    diagnostico_id INTEGER NOT NULL REFERENCES diagnosticos(id),
+    ts INTEGER NOT NULL,
+    acciones TEXT NOT NULL DEFAULT '[]',        -- JSON: acciones del catálogo ya validadas {accion, parametros, porque, simulacion}
+    pasos_manuales TEXT NOT NULL DEFAULT '[]',  -- JSON: textos para el usuario
+    verificar TEXT,            -- cómo comprobar que funcionó
+    descartes TEXT NOT NULL DEFAULT '[]',       -- JSON: lo que se descartó de la respuesta del modelo y por qué
+    redactado INTEGER NOT NULL DEFAULT 0,       -- 1 si lo redactó el modelo
+    estado TEXT NOT NULL DEFAULT 'propuesto' CHECK (estado IN
+        ('propuesto','aprobado','rechazado','aplicado','verificado','fallido','escalado'))
+);
+CREATE INDEX IF NOT EXISTS idx_planes_diag ON planes(diagnostico_id);
 CREATE TABLE IF NOT EXISTS cuarentena (
     id INTEGER PRIMARY KEY,
     ruta_original TEXT NOT NULL,

@@ -70,9 +70,8 @@ def test_los_secretos_de_la_configuracion_no_salen(cliente_api):
     assert "esto-es-un-secreto" not in json.dumps(cfg)
 
 
-def test_diagnosticos_dice_no_disponible_todavia(cliente_api):
-    r = cliente_api.get("/api/diagnosticos").json()
-    assert r["disponible"] is False and "todavía" in r["mensaje"]
+def test_diagnosticos_existe_y_esta_vacio_hasta_que_haya_alguno(cliente_api):
+    assert cliente_api.get("/api/diagnosticos").json() == {"diagnosticos": []}
 
 
 # ---------- protección ----------

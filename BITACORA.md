@@ -1628,3 +1628,40 @@ _2026-10-29 · limitacion_
   - `UV_CACHE_DIR`/`PIP_CACHE_DIR` no se respetan; solo `~/.cache` o `XDG_CACHE_HOME` dentro del HOME.
   - Un `uv`/`pip` ajeno en marcha bloquea la limpieza de su caché (los ancestros de pc-doctor se ignoran porque el recolector corre bajo `uv run`).
   - Cualquier proceso cuya línea de comandos contenga `pc-doctor` queda protegido, incluso de otro programa.
+
+## Remediación asistida: Fase 2 (diagnóstico y plan)
+
+### Decisiones
+_2026-10-29 · decision_
+<!-- entrada {"id":119,"seccion":"Remediación asistida: Fase 2 (diagnóstico y plan)","titulo":"Decisiones","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":426,"tipo":"invariante","vigencia":"vigente","fecha":"2026-10-29","resumen":"El claude -p del diagnóstico usa el mismo bloque de seguridad que el reporte (agente.py) y las mismas tools de lectura","modulos":["mcp","remediacion","reporte"],"archivos":["agente.py","diagnostico.py","reporte.py"],"prueba":"tests/test_diagnostico.py::test_la_invocacion_del_diagnostico_es_de_solo_lectura"} -->
+- El bloque de seguridad (sin integradas, MCP estricto solo de pc-doctor, tools de lectura una por una, `dontAsk`, sin CLAUDE.md ni memoria, prompt por stdin, carpeta neutra) se extrajo de `reporte.py` a `agente.py`; `reporte.py` conserva los nombres por compatibilidad.
+  - El diagnóstico usa `reporte.HERRAMIENTAS_LECTURA` (incluye `correlacionar` y `hechos_conocidos`). Nunca `buscar_memoria` ni ninguna de escritura.
+  - `diagnosticos`, `planes`, `detalle_plan`, `recetas`, `aprobar_plan` y `rechazar_plan` quedan prohibidas por nombre para el modelo (los diagnósticos anteriores son texto generado por un modelo: otro canal para arrastrar instrucciones). El prompt tampoco incluye hipótesis anteriores.
+  **(invariante · prueba: tests/test_diagnostico.py::test_la_invocacion_del_diagnostico_es_de_solo_lectura)**
+  <!-- item {"id":427,"tipo":"invariante","vigencia":"vigente","fecha":"2026-10-29","resumen":"Lo que dice el modelo se valida y se descarta por partes; nada de eso se ejecuta","modulos":["remediacion"],"archivos":["diagnostico.py"],"prueba":"tests/test_diagnostico.py::test_acciones_fuera_del_catalogo_o_con_parametros_malos_se_descartan_y_se_registran"} -->
+- `diagnostico.validar_respuesta`: JSON con esquema estricto (hipótesis, confianza, evidencia con referencia+dato, acciones, pasos manuales, cómo verificar, sospechoso). Si no valida entero, el plan es «sin redactar»; si solo fallan acciones, se descartan esas y se anota por qué en `planes.descartes`.
+  - Cada acción pasa por `remediacion.aplicar(simular=True)`: catálogo, parámetros estrictos y reglas de simulación (servicio no permitido, pid del sistema). El rechazo queda en `ejecuciones`. `diagnostico.py` nunca ejecuta (una prueba lo vigila).
+  - Texto con forma de orden: se guarda como dato, se marca en `sospechoso` y la confianza baja a «baja». Es un aviso, no una barrera: la barrera es catálogo + validación + aprobación.
+  - Sin evidencia concreta no hay confianza alta. Se limpian controles y secuencias de escape.
+  **(invariante · prueba: tests/test_diagnostico.py::test_acciones_fuera_del_catalogo_o_con_parametros_malos_se_descartan_y_se_registran)**
+  <!-- item {"id":428,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"El changelog del diagnóstico solo lleva datos de este código, nunca texto del modelo","modulos":["memoria","remediacion"],"archivos":["diagnostico.py"],"prueba":"tests/test_diagnostico.py::test_el_diagnostico_queda_en_el_changelog_sin_el_texto_del_modelo"} -->
+- Cada diagnóstico completo registra una `observacion` abierta del componente de la alerta con: id, modo, disparador, firma, confianza y cantidad de acciones. La hipótesis y la evidencia (texto del modelo) viven en `diagnosticos` y se ven en el dashboard.
+  - Motivo: `CHANGELOG.md` se exporta a git y las sesiones de Claude Code lo leen (`changelog_abierto`): sería un canal para que un texto envenenado llegue a un agente con herramientas.
+  - `diagnosticos.changelog_id` guarda la entrada para cerrarla con `resolver_changelog` en la fase 3.
+  <!-- item {"id":429,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Disparadores: crítica nueva, empeoró, malicioso y SMART; el recolector no espera y hay tope diario","modulos":["datos","remediacion","salud"],"archivos":["collector.py","db.py","diagnostico.py","salud.py"],"prueba":"tests/test_diagnostico.py::test_limite_diario_y_disparadores_configurables"} -->
+- `diagnostico.disparar` es el último paso del recolector: crea filas `pendiente` y lanza `diagnostico.py --diagnosticar N` en una unidad `systemd-run --user` (sin systemd, un proceso desprendido). Un pendiente de más de 1 h se da por fallido.
+  - Un diagnóstico por aparición de la alerta (`ref` = clave + `desde`); si luego empeora (severidad o valor) hay otro. Un hecho conocido silencia, salvo que empeore: `salud.ciclo` ahora devuelve `empeoradas` (las claves que avisaron por empeorar bajo un hecho).
+  - `config.json -> remediacion`: `usar_modelo`, `modelo`, `max_turns`, `timeout_s`, `max_diagnosticos_dia` (3) y `disparadores`; valores por defecto sin escribir nada. Los límites por firma y la autonomía llegan en la fase 5.
+  - Tablas `diagnosticos` y `planes` en `db.ESQUEMA`; `/api/diagnosticos` ya no responde «no disponible».
+
+### Limitaciones
+_2026-10-29 · limitacion_
+<!-- entrada {"id":120,"seccion":"Remediación asistida: Fase 2 (diagnóstico y plan)","titulo":"Limitaciones","fecha":"2026-10-29","tipo":"limitacion"} -->
+
+<!-- item {"id":430,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"«Empeoró» sin hecho conocido compara contra el estado del diagnóstico anterior y no conoce el sentido de la regla","modulos":["remediacion","salud"],"archivos":["diagnostico.py"]} -->
+- `alertas_salud` no guarda la dirección de la regla (`dir`): para reglas donde bajar es empeorar (espacio libre, SMART ok) un valor que baja no cuenta como empeoro.
+  - Una alerta de aviso sin hecho y sin diagnóstico previo solo dispara si es de SMART; las críticas disparan siempre al aparecer.
+  - Si el tope diario se agota, el diagnóstico de esa alerta se pierde (no se reintenta).
+  - Sin las recetas de la fase 4, la parte determinística del plan es solo la correlación (sin acciones).

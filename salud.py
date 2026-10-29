@@ -506,4 +506,5 @@ def ciclo(con, notificar=alertas.notificar) -> dict:
         enviado = enviar_aviso(con, r["a_avisar"], ahora, notificar)
     return {"lecturas": len(lecturas), "fuera_de_lo_normal": len(conds), "a_avisar": len(r["a_avisar"]),
             "aviso_enviado": enviado, "resueltas": len(r["resueltas"]),
+            "empeoradas": [c["clave"] for c in r["a_avisar"] if c.get("hecho_id")],   # empeoraron bajo un hecho conocido (remediación)
             "contexto": contexto, "aprendizaje": aprendizaje}
