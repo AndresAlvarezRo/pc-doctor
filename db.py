@@ -140,6 +140,10 @@ CREATE TABLE IF NOT EXISTS recetas (
     primera_vez INTEGER NOT NULL, ultima_vez INTEGER NOT NULL,
     UNIQUE (firma, clave)
 );
+CREATE TABLE IF NOT EXISTS cortes_auto (
+    firma TEXT PRIMARY KEY,    -- mientras haya un corte vigente, esa firma no se aplica sola (solo con aprobación manual)
+    ts INTEGER NOT NULL, plan_id INTEGER, motivo TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS cuarentena (
     id INTEGER PRIMARY KEY,
     ruta_original TEXT NOT NULL,

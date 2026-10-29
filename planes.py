@@ -20,6 +20,8 @@ import recetas
 import remediacion
 from db import log
 
+CORTE_DIAS = 7       # cuánto dura un corte por bucle antes de que esa firma pueda volver a aplicarse sola
+VENTANA_INTENTOS_S = 86400
 ESTADOS = ("propuesto", "aprobado", "rechazado", "aplicado", "verificado", "fallido", "escalado")
 MAX_RESUMEN = 110
 
@@ -104,6 +106,8 @@ def aprobar(plan_id: int, origen: str) -> dict:
             return {"ok": False, "error": f"No existe el plan {plan_id}."}
         if f["estado"] != "propuesto":
             return {"ok": False, "error": f"El plan está «{f['estado']}»: solo se aprueba uno «propuesto»."}
+        if diagnostico.configuracion()["nivel"] == 0:
+            return {"ok": False, "error": "El nivel de autonomía es 0 (solo diagnóstico): no se aplica nada. Se cambia en config.json (remediacion.nivel)."}
         acciones = _cargar(f["acciones"], [])
         if not acciones:
             return {"ok": False, "error": "El plan no tiene acciones para aplicar (es solo diagnóstico). Los pasos manuales los hacés vos."}
@@ -186,11 +190,16 @@ def verificar_pendientes(con) -> dict:
 
     `verificado` si ambas cosas; `fallido` (y se escala) si pasaron `verificar_corridas` corridas sin lograrlo."""
     maximo = diagnostico.configuracion()["verificar_corridas"]
-    res = {"verificados": [], "fallidos": [], "esperando": []}
+    res = {"verificados": [], "fallidos": [], "esperando": [], "cortados": []}
     for p in con.execute("SELECT id FROM planes WHERE estado='aplicado'").fetchall():
         con.execute("UPDATE planes SET corridas = corridas + 1 WHERE id=?", (p["id"],))
         con.commit()
         f = _fila(con, p["id"])
+        nueva = _alerta_nueva_tras(con, f)
+        if nueva:
+            _cortar(con, p["id"], f"tras aplicar el plan apareció la alerta nueva `{diagnostico.limpiar(nueva, 80)}`")
+            res["cortados"].append(p["id"])
+            continue
         efectos = [remediacion.verificar_efecto(i) for i in _cargar(f["ejecuciones"], []) if type(i) is int]
         cumplidos = all(e["cumplido"] for e in efectos)
         resuelta = _alerta_resuelta(con, f)
@@ -213,6 +222,77 @@ def verificar_pendientes(con) -> dict:
         else:
             res["esperando"].append(p["id"])
     return res
+
+
+def _alerta_nueva_tras(con, f) -> str | None:
+    """Clave de una alerta de otra cosa que empezó después de aplicar el plan. Es una coincidencia en el tiempo, no una prueba:
+    por eso lo único que dispara es cortar lo automático y avisar, nunca una acción."""
+    r = con.execute("SELECT clave FROM alertas_salud WHERE activa=1 AND desde>=? AND clave<>COALESCE(?, '') ORDER BY desde LIMIT 1",
+                    (f["aplicado_en"], f["alerta_clave"])).fetchone()
+    return r["clave"] if r else None
+
+
+def corte_vigente(con, firma: str) -> dict | None:
+    r = con.execute("SELECT * FROM cortes_auto WHERE firma=? AND ts>?", (firma, db.ahora() - CORTE_DIAS * 86400)).fetchone()
+    return dict(r) if r else None
+
+
+def _cortar(con, plan_id: int, motivo: str) -> None:
+    """Bucle: una acción aplicada trajo otra alerta. Se corta todo lo automático de esa firma, el plan queda `escalado` y se avisa."""
+    f = _fila(con, plan_id)
+    con.execute("INSERT INTO cortes_auto (firma, ts, plan_id, motivo) VALUES (?,?,?,?) ON CONFLICT(firma) DO UPDATE SET ts=excluded.ts, "
+                "plan_id=excluded.plan_id, motivo=excluded.motivo", (f["firma"], db.ahora(), plan_id, motivo))
+    con.execute("UPDATE planes SET estado='escalado', resultado=? WHERE id=?", (f"posible bucle: {motivo}; se cortó lo automático para esta alerta", plan_id))
+    con.commit()
+    _escalar(con, plan_id)
+    _receta(con, plan_id, False)
+
+
+def autoaplicar(con, plan_id: int) -> dict:
+    """Nivel 2: aplica sola la acción preaprobada de una receta madura. Devuelve {"aplicado": bool, "motivo": ...}.
+
+    Condiciones (todas): nivel 2; todas las acciones están en `preaprobadas` (que solo edita el usuario) y son preaprobables en el
+    catálogo; la receta exacta tiene ≥2 éxitos; sin corte por bucle; menos de `max_intentos_por_firma` aplicados en 24 h y al menos
+    `espera_entre_intentos_min` desde el último. Si algo falla, el plan sigue `propuesto` para aprobación manual."""
+    cfg = diagnostico.configuracion()
+    f = _fila(con, plan_id)
+    acciones = _cargar(f["acciones"], []) if f else []
+    no = lambda m: {"aplicado": False, "motivo": m}
+    if cfg["nivel"] != 2:
+        return no("el nivel de autonomía no es 2")
+    if f["estado"] != "propuesto" or not acciones:
+        return no("el plan no está propuesto o no tiene acciones")
+    for a in acciones:
+        c = remediacion.CATALOGO.get(a.get("accion"))
+        if c is None or not c.preaprobable or a["accion"] not in cfg["preaprobadas"]:
+            return no(f"«{diagnostico.limpiar(a.get('accion'), 40)}» no está preaprobada")
+    if not recetas.es_madura(con, f["firma"], acciones):
+        return no("no hay una receta madura (2 éxitos o más) con estas acciones para esta alerta")
+    if corte_vigente(con, f["firma"]):
+        return no("hay un corte por bucle vigente para esta alerta")
+    previos = con.execute("SELECT aplicado_en FROM planes p JOIN diagnosticos d ON d.id=p.diagnostico_id WHERE d.firma=? AND p.aplicado_en>? "
+                          "ORDER BY p.aplicado_en DESC", (f["firma"], db.ahora() - VENTANA_INTENTOS_S)).fetchall()
+    if len(previos) >= cfg["max_intentos_por_firma"]:
+        return no(f"ya hubo {len(previos)} intento(s) en 24 h para esta alerta (máximo {cfg['max_intentos_por_firma']})")
+    if previos and db.ahora() - previos[0]["aplicado_en"] < cfg["espera_entre_intentos_min"] * 60:
+        return no(f"hay que esperar {cfg['espera_entre_intentos_min']} min entre intentos")
+    r = aprobar(plan_id, "automatico")
+    if not r["ok"] and r.get("estado") is None:
+        return no(r.get("error", "no se pudo aprobar"))
+    _avisar_automatico(con, plan_id, r)
+    return {"aplicado": r["ok"], "motivo": r.get("resultado", ""), "resultado": r}
+
+
+def _avisar_automatico(con, plan_id: int, r: dict) -> None:
+    f = _fila(con, plan_id)
+    try:
+        if f and _notificaciones_activas():
+            hechas = "; ".join(f"{a['accion']}: {'ok' if a['ok'] else 'falló'}" for a in r.get("acciones", []))
+            alertas.notificar("pc-doctor: apliqué un plan solo" if r["ok"] else "pc-doctor: un plan automático falló",
+                              f"Alerta: {diagnostico.limpiar(f['firma'], 80)}\n{hechas}\nSe verifica en las próximas corridas. Podés deshacerlo desde el plan.",
+                              critica=not r["ok"], seccion=f"plan:{plan_id}")
+    except Exception as e:
+        log.warning("no pude avisar del plan automático: %s", e)
 
 
 def _receta(con, plan_id: int, funciono: bool) -> None:

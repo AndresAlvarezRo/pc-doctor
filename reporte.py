@@ -59,6 +59,12 @@ HERRAMIENTAS_PROHIBIDAS = [
     "diagnosticos", "planes", "detalle_plan", "recetas", "aprobar_plan", "rechazar_plan",
 ]
 
+# Solo el reporte semanal lee lo diagnosticado y aplicado: `diagnosticos` y `planes` devuelven resúmenes armados por el código (alerta,
+# modo, confianza, estado, acciones por nombre), sin hipótesis ni texto del modelo. El diagnóstico (`diagnostico.py`) usa las listas
+# de arriba, sin ellas. `detalle_plan` (trae el texto del modelo) y `recetas` siguen prohibidas para ambos.
+HERRAMIENTAS_REPORTE = HERRAMIENTAS_LECTURA + ["diagnosticos", "planes"]
+PROHIBIDAS_REPORTE = [t for t in HERRAMIENTAS_PROHIBIDAS if t not in ("diagnosticos", "planes")]
+
 CONFIG_REPORTE = {"habilitado": True, "modelo": "sonnet", "max_turns": 30, "timeout_s": 900, "claude": ""}
 RESUMEN_MAX = 180
 MINIMO_CARACTERES = 400   # una respuesta más corta no es un reporte: se usa el plan B
@@ -79,7 +85,8 @@ sensores de temperatura de CPU y GPU que veas en estado_salud, por su nombre exa
 también con contexto "juego" y "reposo" para separar el uso); historial de los sensores de sdb (sdb/sectores_realocados, sdb/sectores_pendientes,
 sdb/sectores_incorregibles, sdb/errores_crc) con desde "30d"; sesiones_actividad con tipo "juego" y dias 7;
 hallazgos_seguridad con estado "todos" y dias 7; cambios_entorno con "7d"; errores_recientes con horas 168;
-espacio_disco; puertos_en_escucha. Para cada alerta activa importante usá correlacionar con su id.
+espacio_disco; puertos_en_escucha; diagnosticos con dias 7 y planes (qué se diagnosticó, qué se aplicó y si funcionó: mencionalo
+en la sección 8 en una línea, sin inventar el resultado de lo que sigue «aplicado» o «propuesto»). Para cada alerta activa importante usá correlacionar con su id.
 Ante una alerta o anomalía, recordá que correlacionar da coincidencias en el tiempo, no causas demostradas.
 
 HECHOS CONOCIDOS: antes de las recomendaciones llamá a hechos_conocidos (sin argumentos). Son cosas que el usuario ya sabe y
@@ -137,13 +144,13 @@ def leer(con, fecha: str) -> dict | None:
 # ---------- ejecución de Claude ----------
 
 def construir_comando(claude: str, cfg: dict) -> list[str]:
-    return agente.construir_comando(claude, cfg, HERRAMIENTAS_LECTURA, HERRAMIENTAS_PROHIBIDAS)
+    return agente.construir_comando(claude, cfg, HERRAMIENTAS_REPORTE, PROHIBIDAS_REPORTE)
 
 
 def pedir_a_claude(cfg: dict) -> tuple[str | None, str | None, float]:
     """(texto, motivo_del_fallo, segundos). Si texto es None, `motivo` explica por qué hay que usar el plan B."""
-    salida, motivo, seg = agente.pedir(PROMPT.format(fecha=datetime.now().strftime("%Y-%m-%d")), cfg, HERRAMIENTAS_LECTURA,
-                                       HERRAMIENTAS_PROHIBIDAS, "reportes")
+    salida, motivo, seg = agente.pedir(PROMPT.format(fecha=datetime.now().strftime("%Y-%m-%d")), cfg, HERRAMIENTAS_REPORTE,
+                                       PROHIBIDAS_REPORTE, "reportes")
     if salida is None:
         return None, motivo, seg
     if len(salida) < MINIMO_CARACTERES or salida.count("\n## ") < 3:

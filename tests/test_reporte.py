@@ -72,10 +72,11 @@ def test_la_invocacion_de_claude_es_de_solo_lectura(con, config, aviso, monkeypa
 def test_toda_tool_permitida_existe_en_el_servidor_y_no_escribe():
     """Si alguien agrega un efecto a una tool 'de lectura', o renombra una, esto falla."""
     reales = {t.name for t in server.mcp._tool_manager.list_tools()}
-    assert set(reporte.HERRAMIENTAS_LECTURA) <= reales
+    assert set(reporte.HERRAMIENTAS_REPORTE) <= reales
     assert set(reporte.HERRAMIENTAS_PROHIBIDAS) & set(reporte.HERRAMIENTAS_LECTURA) == set()
-    for nombre in reporte.HERRAMIENTAS_LECTURA:
-        fuente = inspect.getsource(getattr(server, nombre))
+    assert set(reporte.PROHIBIDAS_REPORTE) & set(reporte.HERRAMIENTAS_REPORTE) == set()
+    for nombre in reporte.HERRAMIENTAS_REPORTE:
+        fuente = inspect.getsource(getattr(server, "planes_tool" if nombre == "planes" else nombre))   # la tool `planes` es planes_tool
         for efecto in ("_registrar_accion", "shutil.move", "INSERT", "UPDATE ", "DELETE", ".commit()", "revisar_y_guardar", "consultar_sospechosos"):
             assert efecto not in fuente, f"{nombre} tiene un efecto ({efecto}) y está permitida para el modelo"
 

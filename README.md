@@ -34,8 +34,8 @@ Todo lo marcado como listo está probado (ver [Desarrollo](#desarrollo)); cómo 
 | Dashboard, fases 0 a 3 | API de solo lectura, interfaz, servicio, lanzador y ícono en el escritorio, PWA, enlaces directos, notificaciones con botón (activo) y tool `abrir_dashboard` | Listo |
 | Dashboard, fase 4 | Acciones y gestión con token local y verificación de origen (marcar alertas, limpiezas sin root, restaurar, configuración) | **Pendiente** |
 | Dashboard, fase 5 | Botón "Diagnosticar con Claude" en cada alerta | **Pendiente** (opcional) |
-| Diagnóstico automático | Diagnóstico hecho por Claude disparado por una alerta crítica (tabla `diagnosticos`) | **Pendiente** |
-| Calidad | 650 pruebas, hook pre-commit y GitHub Actions | Listo |
+| Remediación asistida | Una alerta grave dispara un diagnóstico (Claude aislado, o solo correlación sin modelo), un plan de acciones de un catálogo cerrado, aprobación tuya, verificación y recetas aprendidas. Ver [Remediación asistida](#remediación-asistida) | Listo en pruebas con `claude` falso; **falta probarlo con una alerta real** y la sección del dashboard en un navegador |
+| Calidad | 1150 pruebas, hook pre-commit y GitHub Actions | Listo |
 | Cobertura de pruebas | El escáner de seguridad, la reputación online y el hilo principal del recolector no tienen pruebas permanentes | **Pendiente** |
 
 **Lo que pc-doctor encontró en esta PC** (detalle en `CHANGELOG.md`): sectores defectuosos y errores CRC en el SSD `sdb`, un ventilador (`fan7`) con velocidad errática y temperaturas de 95-96 °C en CPU y GPU jugando.
@@ -48,6 +48,7 @@ Todo lo marcado como listo está probado (ver [Desarrollo](#desarrollo)); cómo 
 | `salud.py`, `linea_base.py`, `actividad.py`, `correlacion.py` | Sensores y reglas, valores normales aprendidos, juegos y sesiones, posibles causas |
 | `seguridad.py`, `reputacion.py` | Escaneo de seguridad y reputación de hashes |
 | `alertas.py`, `dashboard.py`, `reporte.py` | Notificaciones (con botón), abrir el dashboard, reporte semanal |
+| `remediacion.py`, `diagnostico.py`, `planes.py`, `recetas.py`, `agente.py` | Catálogo cerrado de acciones y su ejecutor; diagnóstico y plan; aprobar, aplicar, verificar y escalar; recetas; el `claude -p` aislado que comparten el reporte y el diagnóstico |
 | `web/` | API (`api.py`), frontend React (`frontend/`), datos de prueba, íconos y el script de compilación |
 | `systemd/` | Unidades de usuario: recolector, reporte semanal y dashboard |
 | `tests/`, `scripts/` | Suite de pruebas; hook pre-commit y su instalador |
@@ -108,6 +109,8 @@ Opcional: `bash web/construir.sh` (compila el frontend; necesita Node, ver [Desa
 | `correlacionar(alerta_id)` | Posibles causas de una alerta o de un hallazgo (`hallazgo:N`); coincidencias, no causas demostradas |
 | `ultimo_reporte()` y `reportes(n)` | El último reporte semanal y el historial |
 | `abrir_dashboard(seccion)` | Abre el dashboard en el navegador |
+| `diagnosticos(dias)`, `planes(estado)`, `detalle_plan(id)`, `recetas(firma)` | Lo diagnosticado y su plan (las dos primeras, sin el texto del modelo), un plan completo (texto no confiable) y lo aprendido |
+| `aprobar_plan(id)`, `rechazar_plan(id)` | Aplican o descartan un plan. **Solo si el usuario lo pide en la conversación**; nunca los usa el `claude -p` |
 | `recordar(tema, texto, tipo)`, `buscar_memoria(consulta, n)`, `memoria_reciente(n)`, `olvidar(id)` | Memoria del agente (hechos, decisiones, preferencias, observaciones) con búsqueda de texto completo; `olvidar` marca como inactivo, no borra |
 | `hechos_conocidos(aplica_a)`, `agregar_hecho_conocido(...)`, `retirar_hecho_conocido(id)` | Lo que el usuario declaró como sabido. **Solo se agregan o retiran si el usuario lo pide en la conversación** |
 | `registrar_bitacora(...)`, `buscar_bitacora(consulta, n)` | Registra un ítem de la bitácora (tipo, módulos, resumen de una línea) y busca sobre los ítems (devuelve resúmenes) |
@@ -177,7 +180,32 @@ Los domingos a las 20:00 (`pc-doctor-reporte.timer`, y al encender la PC si esta
 | `malwarebazaar_key` | Clave de abuse.ch (vacía: ese proveedor queda apagado) |
 | `boton_dashboard` | Botón "Ver en el dashboard" en las notificaciones (apagado por defecto) |
 | `reporte` | `false` o un objeto con `habilitado`, `modelo`, `max_turns`, `timeout_s` y `claude` (ruta) |
+| `remediacion` | Autonomía y límites de la remediación (abajo) |
 | `correlacion` | `horas_antes` y `horas_despues` de la ventana de posibles causas (48 y 2 por defecto) |
+
+## Remediación asistida
+Cuando salta una alerta grave (crítica nueva, una que empeoró, un hallazgo malicioso o un cambio de SMART), pc-doctor la diagnostica en un trabajo aparte (el recolector no espera) y arma un plan. **El modelo solo propone; lo ejecuta el código de pc-doctor.**
+
+1. **Catálogo cerrado.** Solo existen estas acciones, con parámetros validados: `limpiar_cache_miniaturas`, `limpiar_cache_uv`, `limpiar_cache_pip`, `limpiar_descargas_viejas(dias)`, `reiniciar_servicio_usuario(nombre)` (solo los de `servicios_permitidos`), `cambiar_perfil_energia(perfil)` y `cerrar_proceso(pid, nombre_esperado)`. Todo lo demás es un paso manual para vos. Nada se borra: las limpiezas van a la cuarentena (en el mismo disco, así que no liberan espacio).
+2. **Los datos son no confiables.** Nombres de procesos, logs y rutas pueden traer órdenes disfrazadas: el modelo no tiene herramientas de escritura, su respuesta se valida contra un esquema y cada acción se simula, y se vuelve a validar al aplicarla.
+3. **Aprobás vos.** La notificación trae «Ver el plan» (nunca «Aplicar»). En la sección «Diagnósticos y planes» del dashboard aplicás (con confirmación), rechazás o deshacés. Las escrituras del dashboard exigen Host local, Origin propio, JSON y el token de `web_token`.
+4. **Verificación.** Tras aplicar, el recolector comprueba en las próximas corridas (4 = 1 h) que la alerta se resolvió y que cada acción cumplió su efecto: `verificado` o `fallido`. Si falla, avisa con todo lo intentado y deja una entrada abierta en el changelog.
+5. **Recetas.** Solo un plan `verificado` crea o refuerza una receta (alerta + acciones con parámetros); un `fallido` le baja la confianza. El próximo diagnóstico de la misma alerta las recibe como datos estructurados, nunca con la hipótesis ni texto de diagnósticos anteriores. Silenciar no es arreglar: declarar algo como conocido solo lo hacés vos.
+
+**Niveles de autonomía** (`config.json`, clave `remediacion`; se muestran los valores por defecto):
+
+| Clave | Por defecto | Qué hace |
+|---|---|---|
+| `nivel` | `1` | `0` solo diagnostica (no se aplica nada); `1` plan + tu aprobación; `2` aplica sola una acción preaprobada y te avisa después |
+| `preaprobadas` | `[]` | Acciones que pueden aplicarse solas en el nivel 2. Solo las preaprobables del catálogo (las tres cachés); `cerrar_proceso`, los servicios, el perfil y Descargas nunca. Lo edita solo el usuario |
+| `max_diagnosticos_dia` | `3` | Tope de diagnósticos por día |
+| `max_intentos_por_firma` | `2` | Aplicaciones automáticas por alerta en 24 h |
+| `espera_entre_intentos_min` | `60` | Minutos mínimos entre dos aplicaciones automáticas de la misma alerta |
+| `usar_modelo` | `true` | Con `false` el diagnóstico es solo la correlación («plan sin redactar») |
+| `modelo`, `max_turns`, `timeout_s` | `sonnet`, `20`, `300` | Límites del `claude -p` del diagnóstico |
+| `servicios_permitidos`, `verificar_corridas`, `disparadores` | `[]`, `4`, los 4 | Servicios que se pueden reiniciar, corridas de verificación y qué dispara un diagnóstico |
+
+En el nivel 2 una acción se aplica sola únicamente si está en `preaprobadas`, es preaprobable en el catálogo y viene de una receta con **2 éxitos o más** para esa alerta. **Anti-bucle:** si después de aplicar un plan aparece una alerta nueva, se corta todo lo automático de esa alerta durante 7 días, el plan queda `escalado` y se avisa; aprobar a mano sigue siendo posible.
 
 ## Seguridad
 Cada corrida del recolector (~0,4 s extra) revisa procesos y red y guarda los resultados en `hallazgos_seguridad` y `escuchas`.
@@ -219,13 +247,14 @@ La base de datos no se borra; para empezar de cero eliminá `~/.local/share/pc-d
 - La línea base no distingue la hora del día ni la estación del año; la deriva compara contra un mes.
 - Los voltajes de la placa se aprenden pero no tienen un valor nominal de referencia: el kernel no entrega el nombre de cada riel.
 - La detección de juegos se basa en la línea de comandos de los procesos: un programa de Windows bajo Wine que no sea un juego puede contar como juego.
+- La remediación no libera espacio en disco (cuarentena en el mismo disco): contra una alerta de espacio sus planes terminan `fallido`. «Empeoró» sin un hecho conocido compara con el diagnóstico anterior y no conoce el sentido de cada regla. Cualquier proceso con `pc-doctor` o `claude` en su línea de comandos está protegido contra `cerrar_proceso`.
 - El reporte semanal puede quedar sin redactar (plan B) si Claude no está disponible; texto malicioso en los datos del equipo puede terminar en el archivo del reporte (el modelo no puede ejecutar nada ni salir de pc-doctor).
 
 ## Desarrollo
 ### Pruebas
 ```bash
 uv sync                          # instala también las dependencias de desarrollo (pytest, pytest-cov)
-uv run pytest                    # todo (650 pruebas, ~55 s)
+uv run pytest                    # todo (1150 pruebas, ~55 s)
 uv run pytest -m "not lento"     # lo rápido (~9 s): es lo que corre el hook en cada commit
 uv run pytest -m "not local"     # lo que corre GitHub Actions
 uv run pytest --cov              # con cobertura

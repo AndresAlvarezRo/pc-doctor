@@ -31,7 +31,10 @@ from db import log
 
 DISPARADORES = ("critica_nueva", "empeoro", "malicioso", "smart")
 CONFIG_BASE = {"usar_modelo": True, "modelo": "sonnet", "max_turns": 20, "timeout_s": 300, "max_diagnosticos_dia": 3,
-               "disparadores": list(DISPARADORES), "claude": "", "verificar_corridas": 4}
+               "disparadores": list(DISPARADORES), "claude": "", "verificar_corridas": 4,
+               # autonomía: 0 solo diagnostica, 1 plan + aprobación manual (por defecto), 2 aplica sola lo preaprobado de una receta madura
+               "nivel": 1, "preaprobadas": [], "max_intentos_por_firma": 2, "espera_entre_intentos_min": 60}
+NIVELES = (0, 1, 2)
 CONFIANZAS = ("baja", "media", "alta")
 MAX_ACCIONES, MAX_EVIDENCIA, MAX_PASOS, MAX_CAUSAS = 5, 8, 6, 8
 VENCE_S = 3600     # un diagnóstico pendiente o en curso por más de esto se da por fallido
@@ -92,7 +95,18 @@ def configuracion() -> dict:
         return cfg
     for k, base in CONFIG_BASE.items():
         v = crudo.get(k)
-        if isinstance(base, bool):
+        if k == "nivel":
+            ok = type(v) is int and v in NIVELES
+        elif k == "preaprobadas":
+            ok = isinstance(v, list)
+            if ok:      # solo acciones preaprobables del catálogo; el resto se ignora (y se avisa en el log)
+                validas = [x for x in v if isinstance(x, str) and x in remediacion.CATALOGO and remediacion.CATALOGO[x].preaprobable]
+                if len(validas) != len(v):
+                    log.warning("remediacion.preaprobadas: se ignoran entradas que no son acciones preaprobables del catálogo")
+                v = list(dict.fromkeys(validas))
+        elif k == "espera_entre_intentos_min":
+            ok = type(v) is int and v >= 0
+        elif isinstance(base, bool):
             ok = isinstance(v, bool)
         elif isinstance(base, int):
             ok = type(v) is int and v > 0
@@ -348,7 +362,8 @@ def diagnosticar(diag_id: int, pedir=None) -> dict:
                          json.dumps(plan["sospechoso"], ensure_ascii=False), round(seg, 1), motivo if modo != "modelo" else None, diag_id))
             con.commit()
             _anotar_changelog(con, d, modo, plan, pid)
-            _avisar(con, pid)
+            if not _autoaplicar(con, pid):
+                _avisar(con, pid)
             return {"id": diag_id, "plan_id": pid, "modo": modo, "acciones": len(plan["acciones"])}
         except Exception as e:   # un diagnóstico roto no puede dejar la fila en curso
             log.exception("falló el diagnóstico #%s", diag_id)
@@ -373,6 +388,18 @@ def _guardar_plan(con, diag_id: int, plan: dict, descartes: list[str], redactado
                 (js(plan["acciones"]), js(plan["pasos_manuales"]), plan["como_verificar"], js(descartes), int(redactado), pid))
     con.commit()
     return pid
+
+
+def _autoaplicar(con, plan_id: int) -> bool:
+    """Nivel 2: ¿se aplicó solo? (planes.autoaplicar ya avisó). Cualquier fallo deja el plan propuesto y manda el aviso normal."""
+    try:
+        import planes
+        r = planes.autoaplicar(con, plan_id)
+        log.info("plan #%s: %s", plan_id, "aplicado solo" if r["aplicado"] else f"no se aplica solo ({r['motivo']})")
+        return r["aplicado"] or "resultado" in r
+    except Exception:
+        log.exception("falló la aplicación automática del plan #%s", plan_id)
+        return False
 
 
 def _avisar(con, plan_id: int) -> None:

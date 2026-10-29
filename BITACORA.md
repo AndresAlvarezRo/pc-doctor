@@ -1716,3 +1716,27 @@ _2026-10-29 · decision_
   **(invariante · prueba: tests/test_recetas.py::test_las_recetas_no_arrastran_la_hipotesis_ni_el_texto_de_diagnosticos_anteriores)**
   <!-- item {"id":439,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Acciones con parámetros de una sola vez (cerrar_proceso: pid) no entran a recetas","modulos":["remediacion"],"archivos":["recetas.py","remediacion.py"],"prueba":"tests/test_recetas.py::test_planes_sin_acciones_o_con_parametros_de_una_sola_vez_no_hacen_recetas"} -->
 - `Accion.reutilizable` (False en `cerrar_proceso`): un plan con alguna acción no reutilizable no genera receta, porque un pid no vuelve a valer y esa acción nunca es preaprobable.
+
+## Remediación asistida: Fase 5 (autonomía y límites)
+
+### Decisiones
+_2026-10-29 · decision_
+<!-- entrada {"id":124,"seccion":"Remediación asistida: Fase 5 (autonomía y límites)","titulo":"Decisiones","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":440,"tipo":"invariante","vigencia":"vigente","fecha":"2026-10-29","resumen":"Autonomía: 0 solo diagnostica, 1 aprueba el usuario (defecto), 2 aplica sola lo preaprobado de una receta madura","modulos":["remediacion"],"archivos":["diagnostico.py","planes.py"],"prueba":"tests/test_autonomia.py::test_nivel_2_con_receta_madura_aplica_solo_y_avisa_despues"} -->
+- `config.json -> remediacion`: `nivel` (0/1/2; cualquier otro valor vuelve a 1), `preaprobadas` (vacía; solo acciones con `preaprobable` en el catálogo, o sea las tres cachés; lo edita solo el usuario, el modelo no tiene camino a la configuración), `max_intentos_por_firma` 2 (24 h), `espera_entre_intentos_min` 60, `max_diagnosticos_dia` 3, `usar_modelo`, `modelo`, `max_turns`, `timeout_s`.
+  - Nivel 0: `planes.aprobar` se niega aunque lo pida el usuario. Nivel 2: `planes.autoaplicar` exige nivel 2, todas las acciones preaprobadas y preaprobables, receta madura (≥2 éxitos, más éxitos que fallos), sin corte, bajo los límites; si algo falla el plan queda `propuesto` con el aviso normal. Origen `automatico`; el aviso sale después de aplicar.
+  - Los límites solo frenan lo automático; aprobar a mano no se limita.
+  **(invariante · prueba: tests/test_autonomia.py::test_nivel_2_con_receta_madura_aplica_solo_y_avisa_despues)**
+  <!-- item {"id":441,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Anti-bucle: una alerta nueva tras aplicar corta lo automático de esa firma 7 días y escala","modulos":["remediacion"],"archivos":["db.py","planes.py"],"prueba":"tests/test_autonomia.py::test_una_alerta_nueva_tras_aplicar_corta_lo_automatico_y_escala"} -->
+- En `verificar_pendientes`, si hay una alerta activa con otra clave que empezó después de aplicar: tabla `cortes_auto` (firma, plan, motivo), plan `escalado`, receta con un fallo y aviso crítico. Es una coincidencia en el tiempo, por eso solo corta lo automático y avisa; no dispara ninguna acción. El corte vence a los 7 días (`CORTE_DIAS`); no hay forma de levantarlo antes.
+  - Criterio amplio a propósito: un falso positivo cuesta perder lo automático, no ejecutar algo.
+  <!-- item {"id":442,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"El reporte semanal lee diagnosticos y planes; el diagnóstico no","modulos":["remediacion","reporte"],"archivos":["reporte.py"],"prueba":"tests/test_autonomia.py::test_el_reporte_semanal_lee_diagnosticos_y_planes_pero_el_diagnostico_no"} -->
+- `reporte.HERRAMIENTAS_REPORTE` y `PROHIBIDAS_REPORTE` suman `diagnosticos` y `planes` (resúmenes armados por el código, sin hipótesis). `diagnostico.py` sigue con `HERRAMIENTAS_LECTURA`. `detalle_plan` y `recetas` siguen prohibidas para ambos.
+
+### Pendientes
+_2026-10-29 · nota_
+<!-- entrada {"id":125,"seccion":"Remediación asistida: Fase 5 (autonomía y límites)","titulo":"Pendientes","fecha":"2026-10-29","tipo":"nota"} -->
+
+<!-- item {"id":443,"tipo":"pendiente","vigencia":"vigente","fecha":"2026-10-29","resumen":"Editar preaprobadas y nivel desde el dashboard, y levantar un corte por bucle antes de que venza","modulos":["dashboard","remediacion"]} -->
+- Hoy la autonomía solo se edita en config.json: un endpoint que la cambie es otra superficie de escritura, y se decidió no hacerlo sin pedido. Tampoco hay comando para levantar un corte de `cortes_auto`.

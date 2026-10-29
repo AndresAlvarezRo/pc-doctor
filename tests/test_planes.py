@@ -186,7 +186,7 @@ def test_verificado_si_la_alerta_se_resolvio_y_el_efecto_se_cumplio_y_cierra_el_
     assert f["estado"] == "verificado" and f["verificado_en"] and f["corridas"] == 1
     cl, = con.execute("SELECT * FROM changelog").fetchall()
     assert cl["estado"] == "resuelto" and f"Plan #{p} verificado" in cl["detalle"]
-    assert planes.verificar_pendientes(con) == {"verificados": [], "fallidos": [], "esperando": []}    # ya no se mira
+    assert planes.verificar_pendientes(con) == {"verificados": [], "fallidos": [], "esperando": [], "cortados": []}    # ya no se mira
 
 
 def test_espera_las_corridas_configuradas_y_despues_falla_y_escala(con):
