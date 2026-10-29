@@ -55,9 +55,24 @@ def pytest_sessionstart(session):
     assert Path.home() == HOME
 
 
+def matar_ayudantes():
+    """Cierra los procesos que una prueba dejó en segundo plano (el escucha de las notificaciones con botón y los `notify-send`
+    falsos que esperan una respuesta) y espera a que mueran. Si siguieran vivos, escribirían en el registro de la prueba siguiente."""
+    import psutil
+    for p in psutil.process_iter(["cmdline"]):
+        linea = " ".join(p.info["cmdline"] or [])
+        if "--con-boton" in linea or "falsos/notify-send" in linea:
+            try:
+                p.kill()
+                p.wait(3)
+            except psutil.Error:
+                pass
+
+
 @pytest.fixture(autouse=True)
 def entorno_aislado(monkeypatch, request):
     """Carpeta de datos vacía, comandos falsos limpios y sensores/procesos reales bloqueados en cada prueba."""
+    matar_ayudantes()  # antes de vaciar el registro: nada de la prueba anterior puede escribir en él
     for carpeta in (DATOS, HOME):  # cada prueba empieza con datos y HOME vacíos
         for p in carpeta.iterdir():
             shutil.rmtree(p, ignore_errors=True) if p.is_dir() and not p.is_symlink() else p.unlink()
@@ -76,6 +91,8 @@ def entorno_aislado(monkeypatch, request):
             "3321460": {"nombre": "Crimson Desert Enhanced", "carpeta": "Crimson Desert"},
             "1245620": {"nombre": "ELDEN RING NIGHTREIGN", "carpeta": "ELDEN RING NIGHTREIGN"}})
         monkeypatch.setattr(actividad, "_bibliotecas_steam", lambda: [])
+    yield
+    matar_ayudantes()
 
 
 @pytest.fixture
