@@ -9,7 +9,7 @@ Reglas: no borra ni modifica ningún markdown; se niega a escribir si no hay una
 
 import re
 import sys
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 
 import db
@@ -163,13 +163,14 @@ def _entrada_changelog(e: dict) -> dict:
 
 def hechos_de_identidad(texto: str) -> list[dict]:
     """Filas de "Identidad actual" que NO se pueden volver a calcular con el snapshot de entorno (energía, red, sensores extra, Node.js):
-    pasan a `memoria`. Las demás (SO, kernel, CPU, GPU, RAM, discos, placa, paquetes) se generan al exportar desde el snapshot."""
+    pasan a `identidad_manual`, que SÍ se exporta (es identidad de la PC, no un dato personal). Las demás (SO, kernel, CPU, GPU, RAM,
+    discos, placa, paquetes) se generan al exportar desde el snapshot."""
     fecha = (re.search(r"_Última actualización: (\d{4}-\d{2}-\d{2})_", texto) or [None, FECHA_INICIAL])[1]
     res = []
     for campo in ("Energía", "Red expuesta", "Sensores extra", "Node.js"):
         m = re.search(rf"^\| {re.escape(campo)} \| (.+?) \|\s*$", texto, re.M)
         if m:
-            res.append({"tema": f"identidad: {campo.lower()}", "tipo": "hecho", "texto": f"{m.group(1)} (según el changelog al {fecha})"})
+            res.append({"campo": campo, "valor": m.group(1), "fecha": fecha})
     return res
 
 
@@ -194,7 +195,7 @@ def reunir(raiz: Path = RAIZ) -> dict:
     cl = (raiz / "CHANGELOG.md").read_text(encoding="utf-8")
     preambulo, bitacora = parsear_bitacora(bit)
     return {"preambulo": preambulo, "bitacora": bitacora, "changelog": parsear_changelog(cl),
-            "memoria": hechos_de_identidad(cl) + HECHOS_DE_CLAUDE_MD}
+            "identidad": hechos_de_identidad(cl), "memoria": HECHOS_DE_CLAUDE_MD}
 
 
 def migrar(con, datos: dict) -> dict:
@@ -213,11 +214,14 @@ def migrar(con, datos: dict) -> dict:
         for e in datos["bitacora"]:
             con.execute("INSERT INTO bitacora (fecha, seccion, tipo, titulo, contenido) VALUES (?,?,?,?,?)",
                         (e["fecha"], e["seccion"], e["tipo"], e["titulo"], e["contenido"]))
+        for e in datos.get("identidad", []):
+            con.execute("INSERT INTO identidad_manual (campo, valor, actualizado) VALUES (?,?,?)",
+                        (e["campo"], e["valor"], int(datetime.fromisoformat(e["fecha"]).timestamp())))
         for e in datos["memoria"]:
             con.execute("INSERT INTO memoria (creado, actualizado, tema, tipo, texto, origen) VALUES (?,?,?,?,?,'agente')",
                         (ahora, ahora, e["tema"], e["tipo"], e["texto"]))
         con.execute("INSERT INTO acciones (ts, tool, parametros, resultado) VALUES (?,?,?,?)",
-                    (ahora, "migrar_memoria", "{}", f"bitacora={len(datos['bitacora'])} changelog={len(datos['changelog'])} memoria={len(datos['memoria'])}"))
+                    (ahora, "migrar_memoria", "{}", f"bitacora={len(datos['bitacora'])} changelog={len(datos['changelog'])} memoria={len(datos['memoria'])} identidad={len(datos.get('identidad', []))}"))
         con.commit()
     except BaseException:
         con.rollback()
@@ -228,7 +232,7 @@ def migrar(con, datos: dict) -> dict:
 def main(argv: list[str]) -> int:
     datos = reunir()
     print(f"Se migrarían: {len(datos['bitacora'])} entradas de bitácora, {len(datos['changelog'])} del changelog "
-          f"({sum(e['estado'] == 'abierto' for e in datos['changelog'])} abiertas), {len(datos['memoria'])} recuerdos.")
+          f"({sum(e['estado'] == 'abierto' for e in datos['changelog'])} abiertas), {len(datos['memoria'])} recuerdos y {len(datos['identidad'])} filas de identidad.")
     if "--ejecutar" not in argv:
         print("Simulación: no se escribió nada. Con --ejecutar se escribe en la base.")
         return 0

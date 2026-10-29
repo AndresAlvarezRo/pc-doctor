@@ -16,7 +16,6 @@ import reporte
 import server
 
 TABLAS = {"memoria", "memoria_fts", "hechos_conocidos", "bitacora", "bitacora_fts", "changelog"}
-HOY = date.today().isoformat()
 MANANA = (date.today() + timedelta(days=1)).isoformat()
 AYER = (date.today() - timedelta(days=1)).isoformat()
 
@@ -201,7 +200,7 @@ def test_agregar_hecho_rechaza_entradas_invalidas(con, args, donde):
 
 def test_los_hechos_vencidos_dejan_de_silenciar_y_pasan_a_revisar(con):
     memoria.asegurar(con)
-    for texto, vence in (("sin fecha", None), ("vence hoy", HOY), ("vence mañana", MANANA), ("vencido", AYER)):
+    for texto, vence in (("sin fecha", None), ("vence hoy", memoria.hoy()), ("vence mañana", MANANA), ("vencido", AYER)):
         con.execute("INSERT INTO hechos_conocidos (creado, texto, vence) VALUES (?,?,?)", (db.ahora(), texto, vence))
     r = memoria.hechos_conocidos(con)
     assert [h["texto"] for h in r["activos"]] == ["sin fecha", "vence hoy", "vence mañana"]
@@ -242,7 +241,7 @@ CONTENIDO = "- **Decisión:** usar `FTS5`.\n- Y un segundo punto con acentos: é
 def test_registrar_en_la_bitacora_conserva_el_markdown_exacto(con):
     r = memoria.registrar_bitacora(con, "Nivel nuevo 7: prueba", "decision", "Usar FTS5", CONTENIDO)
     f = con.execute("SELECT * FROM bitacora WHERE id=?", (r["id"],)).fetchone()
-    assert (f["fecha"], f["seccion"], f["tipo"], f["titulo"], f["contenido"]) == (HOY, "Nivel nuevo 7: prueba", "decision", "Usar FTS5", CONTENIDO.strip())
+    assert (f["fecha"], f["seccion"], f["tipo"], f["titulo"], f["contenido"]) == (memoria.hoy(), "Nivel nuevo 7: prueba", "decision", "Usar FTS5", CONTENIDO.strip())
     assert memoria.registrar_bitacora(con, "s", "nota", "t", "c", fecha="2026-10-28")["id"] and con.execute("SELECT fecha FROM bitacora ORDER BY id DESC").fetchone()[0] == "2026-10-28"
 
 
@@ -279,7 +278,7 @@ def test_registrar_en_el_changelog(con):
     a = memoria.registrar_changelog(con, "error", "ventilador fan7", "Velocidad errática", titulo="fan7 errático")["id"]
     b = memoria.registrar_changelog(con, "solucion", "cpu", "Cambio de perfil de energía", estado="resuelto", fecha="2026-10-28")["id"]
     fa, fb = (con.execute("SELECT * FROM changelog WHERE id=?", (i,)).fetchone() for i in (a, b))
-    assert (fa["estado"], fa["resuelto_en"], fa["titulo"], fa["fecha"]) == ("abierto", None, "fan7 errático", HOY)
+    assert (fa["estado"], fa["resuelto_en"], fa["titulo"], fa["fecha"]) == ("abierto", None, "fan7 errático", memoria.hoy())
     assert (fb["estado"], fb["resuelto_en"], fb["titulo"]) == ("resuelto", "2026-10-28", None)
 
 
@@ -294,7 +293,7 @@ def test_resolver_una_entrada_no_la_duplica_y_agrega_como_se_resolvio(con):
     i = memoria.registrar_changelog(con, "error", "disco sdb", "Sectores defectuosos")["id"]
     assert "resuelta" in memoria.resolver_changelog(con, i, "Se reemplazó el cable SATA")["mensaje"]
     f = con.execute("SELECT * FROM changelog WHERE id=?", (i,)).fetchone()
-    assert f["estado"] == "resuelto" and f["resuelto_en"] == HOY and "Sectores defectuosos" in f["detalle"] and "Se reemplazó el cable SATA" in f["detalle"]
+    assert f["estado"] == "resuelto" and f["resuelto_en"] == memoria.hoy() and "Sectores defectuosos" in f["detalle"] and "Se reemplazó el cable SATA" in f["detalle"]
     assert con.execute("SELECT COUNT(*) FROM changelog").fetchone()[0] == 1
     assert "ya estaba resuelta" in memoria.resolver_changelog(con, i)["error"] and "error" in memoria.resolver_changelog(con, 999)
 
@@ -317,7 +316,7 @@ ESCRITURA = {"recordar", "olvidar", "agregar_hecho_conocido", "retirar_hecho_con
 
 def test_las_12_tools_nuevas_estan_registradas():
     reales = {t.name for t in server.mcp._tool_manager.list_tools()}
-    assert NUEVAS <= reales and len(reales) == 35
+    assert NUEVAS <= reales and len(reales) == 36
 
 
 def test_las_tools_funcionan_de_punta_a_punta(con):

@@ -60,7 +60,7 @@ def test_una_condicion_activa_marca_el_estado_del_sensor_y_del_componente(con):
 
 def test_la_retencion_borra_lo_crudo_viejo_pero_conserva_el_resumen_diario(con):
     viejo = db.ahora() - 40 * 86400
-    reciente = db.ahora() - 3600
+    reciente = db.ahora()                                    # no "hace una hora": justo después de la medianoche caería en el día anterior
     con.execute("INSERT INTO workspace (id, hostname, machine_id, creado_en) VALUES (1,'h','m',1)")
     for ts in (viejo, reciente):
         con.execute("INSERT INTO metricas (workspace_id, ts, cpu_pct) VALUES (1,?,10)", (ts,))

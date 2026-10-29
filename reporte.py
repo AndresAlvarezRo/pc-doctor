@@ -47,7 +47,7 @@ HERRAMIENTAS_PROHIBIDAS = [
     "procesos_que_mas_consumen", "temperatura_cpu",
     # memoria: la escribe un agente y podría arrastrar texto de los datos; las de escritura nunca, y las de lectura tampoco
     "recordar", "olvidar", "buscar_memoria", "memoria_reciente", "agregar_hecho_conocido", "retirar_hecho_conocido",
-    "registrar_bitacora", "registrar_changelog", "resolver_changelog",
+    "registrar_bitacora", "registrar_changelog", "resolver_changelog", "registrar_identidad",
 ]
 INTEGRADAS_PROHIBIDAS = ["Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent"]
 

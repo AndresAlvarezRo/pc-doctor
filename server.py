@@ -735,6 +735,14 @@ def retirar_hecho_conocido(id: int) -> dict:
 
 
 @mcp.tool()
+def registrar_identidad(campo: str, valor: str) -> dict:
+    """Crea o actualiza una fila de "Identidad actual" del CHANGELOG.md que NO se puede calcular sola: energía, red expuesta,
+    sensores extra, Node.js. Usala cuando cambie esa parte de la identidad de la PC. Lo demás (SO, kernel, CPU, GPU, RAM, discos,
+    placa, paquetes) sale del último snapshot y se rechaza. Se exporta a git: no pongas secretos ni datos personales."""
+    return _con_memoria(lambda con: memoria.registrar_identidad(con, campo, valor))
+
+
+@mcp.tool()
 def registrar_bitacora(seccion: str, tipo: str, titulo: str, contenido: str) -> dict:
     """Registra en la bitácora una decisión de diseño, un error encontrado, una prueba o una limitación del proyecto. Usala para
     cada decisión de diseño. `seccion`: por ejemplo 'Nivel nuevo 2: correlación'. `tipo`: decision, error, prueba, limitacion o

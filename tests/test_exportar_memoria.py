@@ -19,7 +19,7 @@ from test_migracion_memoria import BITACORA, CHANGELOG
 
 def sembrar(con):
     pre, bit = mm.parsear_bitacora(BITACORA)
-    mm.migrar(con, {"preambulo": pre, "bitacora": bit, "changelog": mm.parsear_changelog(CHANGELOG), "memoria": mm.hechos_de_identidad(CHANGELOG)})
+    mm.migrar(con, {"preambulo": pre, "bitacora": bit, "changelog": mm.parsear_changelog(CHANGELOG), "identidad": mm.hechos_de_identidad(CHANGELOG), "memoria": mm.HECHOS_DE_CLAUDE_MD})
 
 
 def snapshot(con):
@@ -75,7 +75,50 @@ def test_la_identidad_se_calcula_desde_el_snapshot_y_el_hardware(con):
                      "| GPU | Navi 33 [Radeon RX 7600], driver `amdgpu`, Mesa 26.2.5 |", "| RAM | 31,2 GB (sin swap) |",
                      "| Discos | Patriot Burst Elite 240GB 223,6G (sdb) |", "| Placa madre | ASUSTeK PRIME B550-PLUS, BIOS 3404 |", "| Paquetes | 1 (apt 1) |"):
         assert esperado in md
-    assert "Perfil `balanced`" not in md and "Solo Steam" not in md        # lo de `memoria` (identidad: energía, red...) NO se exporta
+
+
+def test_las_filas_declaradas_a_mano_salen_en_la_identidad_actual(con):
+    sembrar(con)
+    snapshot(con)
+    md = memoria.exportar_changelog(con)
+    tabla = md.split("## Identidad actual")[1].split("## Entradas")[0]
+    assert tabla.index("| Paquetes |") < tabla.index("| Energía | Perfil `balanced` |") < tabla.index("| Red expuesta | Solo Steam |") \
+        < tabla.index("| Sensores extra | `smartmontools` |") < tabla.index("| Node.js | 24.22.2 |")      # después de las calculadas, en orden
+    assert "Energía, Red expuesta, Sensores extra, Node.js: declarados a mano (`registrar_identidad`), no calculados; última actualización: 2026-10-27." in tabla
+
+
+def test_sin_filas_manuales_no_hay_nota_y_sin_snapshot_las_manuales_igual_salen(con):
+    snapshot(con)
+    memoria.asegurar(con)
+    assert "declarados a mano" not in memoria.exportar_changelog(con)
+    memoria.registrar_identidad(con, "Energía", "balanced")
+    con.execute("DELETE FROM hardware"); con.execute("DELETE FROM snapshot_entorno")
+    md = memoria.exportar_changelog(con)
+    assert "| Energía | balanced |" in md and "Todavía no hay un snapshot de entorno" in md
+
+
+def test_registrar_identidad_crea_actualiza_y_rechaza_lo_calculado(con):
+    assert memoria.registrar_identidad(con, "Node.js", "24")["mensaje"] == "Identidad agregada: Node.js."
+    assert memoria.registrar_identidad(con, "node.js", "25")["mensaje"] == "Identidad actualizada: node.js."
+    assert [(f["campo"], f["valor"]) for f in memoria.identidad_declarada(con)] == [("node.js", "25")]          # sin duplicar
+    for malo in ("Kernel", "CPU", "  gpu ", "Placa madre", "_Snapshot_", ""):
+        with pytest.raises(ValueError):
+            memoria.registrar_identidad(con, malo, "x")
+    with pytest.raises(ValueError, match="valor"):
+        memoria.registrar_identidad(con, "Algo", "x" * 1501)
+
+
+def test_la_tool_del_mcp_y_su_efecto_en_la_exportacion(con):
+    import reporte
+    import server
+    assert "error" not in server.registrar_identidad("Red expuesta", "Solo Steam") and "error" in server.registrar_identidad("Kernel", "x")
+    assert "| Red expuesta | Solo Steam |" in memoria.exportar_changelog(con)
+    assert "registrar_identidad" in reporte.HERRAMIENTAS_PROHIBIDAS and "registrar_identidad" not in reporte.HERRAMIENTAS_LECTURA
+
+
+def test_un_valor_con_barra_vertical_o_salto_de_linea_no_rompe_la_tabla(con):
+    memoria.registrar_identidad(con, "Red", "a | b\nc")
+    assert "| Red | a / b c |" in memoria.exportar_changelog(con)
 
 
 def test_si_cambia_el_snapshot_cambia_la_identidad_sin_tocar_las_tablas(con):
@@ -106,11 +149,13 @@ def test_una_entrada_sin_titulo_usa_la_primera_linea_del_detalle(con):
 
 # ---------- lo que NO se exporta ----------
 
-def test_memoria_y_hechos_conocidos_no_salen_de_la_base(con, tmp_path):
+def test_memoria_y_hechos_conocidos_no_salen_de_la_base_pero_la_identidad_manual_si(con, tmp_path):
     sembrar(con)
     memoria.recordar(con, "privado", "dato personal SECRETO-123")
     memoria.agregar_hecho_conocido(con, "otro dato personal SECRETO-456", "sdb")
+    memoria.registrar_identidad(con, "Energía", "SECRETO-789 es identidad, esto sí sale")
     memoria.exportar(con, tmp_path)
+    assert "SECRETO-789" in (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")                  # identidad_manual SÍ se exporta
     todo = "".join(p.read_text(encoding="utf-8") for p in tmp_path.iterdir())
     assert "SECRETO-123" not in todo and "SECRETO-456" not in todo and sorted(p.name for p in tmp_path.iterdir()) == ["BITACORA.md", "CHANGELOG.md"]
 

@@ -78,6 +78,12 @@ CREATE TABLE IF NOT EXISTS hechos_referencia (
     PRIMARY KEY (hecho_id, clave)
 );
 
+CREATE TABLE IF NOT EXISTS identidad_manual (
+    campo TEXT PRIMARY KEY,         -- Energía, Red expuesta, Sensores extra, Node.js...: identidad de la PC que no se puede recalcular
+    valor TEXT NOT NULL,            -- se exporta a "Identidad actual" del CHANGELOG.md (no es un dato personal)
+    actualizado INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS bitacora (
     id INTEGER PRIMARY KEY,
     fecha TEXT NOT NULL,            -- AAAA-MM-DD
@@ -392,6 +398,33 @@ def compacto(h) -> dict | None:
     return None if h is None else {"id": h["id"], "texto": corto(h["texto"], 300), "aplica_a": h["aplica_a"], "vence": h["vence"]}
 
 
+# ---------- identidad declarada a mano ----------
+
+MAX_CAMPO_IDENTIDAD, MAX_VALOR_IDENTIDAD = 60, 1500
+CAMPOS_CALCULADOS = {"hostname", "so", "kernel", "cpu", "gpu", "ram", "discos", "placa madre", "paquetes", "snapshot"}
+
+
+def registrar_identidad(con, campo: str, valor: str) -> dict:
+    """Crea o actualiza una fila de "Identidad actual" que no se puede calcular (energía, red expuesta, sensores extra, Node.js...)."""
+    campo, valor = _texto(campo, "campo", MAX_CAMPO_IDENTIDAD), _texto(valor, "valor", MAX_VALOR_IDENTIDAD)
+    if campo.lower().strip("_ ") in CAMPOS_CALCULADOS:
+        raise ValueError(f"`{campo}` se calcula solo desde el snapshot de entorno; no se declara a mano.")
+    asegurar(con)
+    antes = con.execute("SELECT 1 FROM identidad_manual WHERE lower(campo)=lower(?)", (campo,)).fetchone()
+    if antes:
+        con.execute("DELETE FROM identidad_manual WHERE lower(campo)=lower(?)", (campo,))
+    con.execute("INSERT INTO identidad_manual (campo, valor, actualizado) VALUES (?,?,?)", (campo, valor, db.ahora()))
+    con.commit()
+    return {"mensaje": f"Identidad actualizada: {campo}." if antes else f"Identidad agregada: {campo}."}
+
+
+def identidad_declarada(con) -> list:
+    """Filas declaradas a mano, en el orden en que se agregaron (vacío si la tabla no existe)."""
+    if not existe(con, "identidad_manual"):
+        return []
+    return con.execute("SELECT * FROM identidad_manual ORDER BY rowid").fetchall()
+
+
 # ---------- bitácora ----------
 
 def registrar_bitacora(con, seccion: str, tipo: str, titulo: str, contenido: str, fecha: str = "") -> dict:
@@ -530,11 +563,16 @@ def identidad(con) -> list[tuple[str, str]]:
 def exportar_changelog(con) -> str:
     out = ["# Changelog de la PC", "", AVISO_GENERADO.format(tabla="changelog", tool="registrar_changelog` y `resolver_changelog"), "", INTRO_CHANGELOG, "",
            "## Identidad actual", ""]
-    filas = identidad(con)
+    calculadas, manuales = identidad(con), identidad_declarada(con)
+    filas = calculadas + [(f["campo"], f["valor"]) for f in manuales]
     if filas:
-        out += ["| Campo | Valor |", "|---|---|"] + [f"| {c} | {v.replace('|', '/')} |" for c, v in filas]
-    else:
-        out.append("_Todavía no hay un snapshot de entorno._")
+        out += ["| Campo | Valor |", "|---|---|"] + [f"| {c} | {v.replace('|', '/').replace(chr(10), ' ')} |" for c, v in filas]
+    if not calculadas:
+        out += ["", "_Todavía no hay un snapshot de entorno._"]
+    if manuales:
+        ultima = max(f["actualizado"] for f in manuales)
+        out += ["", f"_{', '.join(f['campo'] for f in manuales)}: declarados a mano (`registrar_identidad`), no calculados; "
+                    f"última actualización: {db.iso(ultima)[:10]}._"]
     out += ["", "## Entradas"]
     for f in con.execute("SELECT * FROM changelog ORDER BY id DESC"):
         titulo = f["titulo"] or corto(f["detalle"].split("\n")[0], 90)

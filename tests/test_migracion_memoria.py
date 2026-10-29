@@ -138,22 +138,25 @@ def test_el_changelog_se_normaliza_sin_perder_notas():
 
 def test_de_la_identidad_solo_pasan_los_datos_que_no_se_pueden_recalcular():
     hs = mm.hechos_de_identidad(CHANGELOG)
-    assert [h["tema"] for h in hs] == ["identidad: energía", "identidad: red expuesta", "identidad: sensores extra", "identidad: node.js"]
-    assert "(según el changelog al 2026-10-27)" in hs[0]["texto"] and all("SO" not in h["tema"] for h in hs)
+    assert [(h["campo"], h["valor"], h["fecha"]) for h in hs] == [
+        ("Energía", "Perfil `balanced`", "2026-10-27"), ("Red expuesta", "Solo Steam", "2026-10-27"),
+        ("Sensores extra", "`smartmontools`", "2026-10-27"), ("Node.js", "24.22.2", "2026-10-27")]
 
 
 def datos():
     pre, bit = mm.parsear_bitacora(BITACORA)
-    return {"preambulo": pre, "bitacora": bit, "changelog": mm.parsear_changelog(CHANGELOG), "memoria": mm.hechos_de_identidad(CHANGELOG) + mm.HECHOS_DE_CLAUDE_MD}
+    return {"preambulo": pre, "bitacora": bit, "changelog": mm.parsear_changelog(CHANGELOG), "identidad": mm.hechos_de_identidad(CHANGELOG),
+            "memoria": mm.HECHOS_DE_CLAUDE_MD}
 
 
 def test_migrar_escribe_todo_y_deja_los_ids_en_orden_cronologico(con):
     r = mm.migrar(con, datos())
-    assert r == {"bitacora": 9, "changelog": 3, "memoria": 6}
+    assert r == {"bitacora": 9, "changelog": 3, "memoria": 2}
+    assert [f["campo"] for f in memoria.identidad_declarada(con)] == ["Energía", "Red expuesta", "Sensores extra", "Node.js"]
     assert [f["fecha"] for f in con.execute("SELECT fecha FROM changelog ORDER BY id")] == ["2026-10-26", "2026-10-27", "2026-10-28"]   # el archivo va al revés
     assert [f["titulo"] for f in con.execute("SELECT titulo FROM bitacora ORDER BY id LIMIT 2")] == ["Estructura y datos", "Servidor MCP"]
     assert con.execute("SELECT COUNT(*) FROM acciones WHERE tool='migrar_memoria'").fetchone()[0] == 1
-    assert memoria.buscar_bitacora(con, "Texto propio de la fase")["total"] == 1 and memoria.buscar_memoria(con, "energia")["total"] == 1   # y se puede buscar
+    assert memoria.buscar_bitacora(con, "Texto propio de la fase")["total"] == 1 and memoria.buscar_memoria(con, "privacidad")["total"] == 1   # y se puede buscar
     assert memoria.changelog_abierto(con)["total"] == 2 and memoria.hechos_conocidos(con)["activos"] == []     # ningún hecho conocido se carga solo
 
 

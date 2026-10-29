@@ -4,7 +4,7 @@ Sistema de diagnóstico de la PC (pensado para Zorin OS / Ubuntu): mide la salud
 
 Tres partes:
 1. **Recolector** (`collector.py`): lo corre un systemd user timer cada 15 minutos y al arrancar; tarda ~3 segundos. Guarda sensores, métricas, eventos, snapshots del entorno y hallazgos de seguridad en SQLite.
-2. **Servidor MCP** (`server.py`, FastMCP): 35 tools para Claude Code, entre ellas consultas de historial, estado en vivo, alertas, posibles causas y acciones acotadas.
+2. **Servidor MCP** (`server.py`, FastMCP): 36 tools para Claude Code, entre ellas consultas de historial, estado en vivo, alertas, posibles causas y acciones acotadas.
 3. **Dashboard** (`web/`): app local en `http://localhost:8787` (solo `127.0.0.1`) con FastAPI y React, que muestra lo mismo que el MCP porque comparten las mismas funciones.
 
 Los datos viven en `~/.local/share/pc-doctor/` (visible desde el proyecto como `datos/`). El registro detallado de cada decisión, error y limitación está en [`BITACORA.md`](BITACORA.md); lo que se observó del equipo, en [`CHANGELOG.md`](CHANGELOG.md).
@@ -35,7 +35,7 @@ Todo lo marcado como listo está probado (ver [Desarrollo](#desarrollo)); cómo 
 | Dashboard, fase 4 | Acciones y gestión con token local y verificación de origen (marcar alertas, limpiezas sin root, restaurar, configuración) | **Pendiente** |
 | Dashboard, fase 5 | Botón "Diagnosticar con Claude" en cada alerta | **Pendiente** (opcional) |
 | Diagnóstico automático | Diagnóstico hecho por Claude disparado por una alerta crítica (tabla `diagnosticos`) | **Pendiente** |
-| Calidad | 519 pruebas, hook pre-commit y GitHub Actions | Listo |
+| Calidad | 541 pruebas, hook pre-commit y GitHub Actions | Listo |
 | Cobertura de pruebas | El escáner de seguridad, la reputación online y el hilo principal del recolector no tienen pruebas permanentes | **Pendiente** |
 
 **Lo que pc-doctor encontró en esta PC** (detalle en `CHANGELOG.md`): sectores defectuosos y errores CRC en el SSD `sdb`, un ventilador (`fan7`) con velocidad errática y temperaturas de 95-96 °C en CPU y GPU jugando.
@@ -112,6 +112,7 @@ Opcional: `bash web/construir.sh` (compila el frontend; necesita Node, ver [Desa
 | `hechos_conocidos(aplica_a)`, `agregar_hecho_conocido(...)`, `retirar_hecho_conocido(id)` | Lo que el usuario declaró como sabido. **Solo se agregan o retiran si el usuario lo pide en la conversación** |
 | `registrar_bitacora(...)`, `buscar_bitacora(consulta, n)` | Decisiones, errores, pruebas y limitaciones del proyecto |
 | `registrar_changelog(...)`, `resolver_changelog(id, detalle)`, `changelog_abierto()` | Historia de la PC: errores, soluciones y cambios, con su estado |
+| `registrar_identidad(campo, valor)` | Filas de "Identidad actual" que no se calculan solas (energía, red expuesta, sensores extra, Node.js); se exportan al changelog |
 
 ## Memoria
 La memoria vive en cuatro tablas de `doctor.db` y se consulta por el MCP, en vez de cargarse entera en cada sesión desde archivos:
@@ -122,10 +123,11 @@ La memoria vive en cuatro tablas de `doctor.db` y se consulta por el MCP, en vez
 | `hechos_conocidos` | Lo que **el usuario** declara como sabido, con a qué se aplica (`aplica_a`: sensor, disco, alerta) y una fecha de revisión opcional. Personal: no se exporta |
 | `bitacora` | Decisiones, errores, pruebas y limitaciones del proyecto, por sección |
 | `changelog` | Errores, soluciones y cambios de la PC, con estado (abierto o resuelto) |
+| `identidad_manual` | Las filas de "Identidad actual" que no se pueden recalcular (energía, red expuesta, sensores extra, Node.js). Es identidad de la PC, no datos personales: **sí se exporta** |
 
 **Un hecho conocido silencia lo conocido, no lo nuevo.** Una alerta cubierta por un hecho no se vuelve a notificar ni a recomendar en el reporte semanal mientras no empeore (sube la severidad, o el valor se aleja de lo normal: cualquier aumento en los contadores de SMART, más del 5 % en el resto). Si el hecho vence, deja de silenciar y aparece en el reporte como "para revisar". El dashboard muestra el hecho junto a cada alerta cubierta y tiene las secciones "Hechos conocidos" y "Changelog" (solo lectura).
 
-**Exportar:** `BITACORA.md` y `CHANGELOG.md` se generan desde las tablas con `uv run memoria.py --exportar` (con `--destino CARPETA` para ver el resultado sin pisar los archivos). No se editan a mano: el hook pre-commit los regenera y los agrega al commit. La "Identidad actual" del changelog se calcula del último snapshot de entorno y su hardware. Las tablas se crean al escribir por primera vez; las lecturas nunca las crean.
+**Exportar:** `BITACORA.md` y `CHANGELOG.md` se generan desde las tablas con `uv run memoria.py --exportar` (con `--destino CARPETA` para ver el resultado sin pisar los archivos). No se editan a mano: el hook pre-commit los regenera y los agrega al commit. La "Identidad actual" del changelog se calcula del último snapshot de entorno y su hardware, más las filas de `identidad_manual`. Las tablas se crean al escribir por primera vez; las lecturas nunca las crean.
 
 **Migrar** (una sola vez, ya hecho en esta PC): `uv run migrar_memoria.py` simula y `--ejecutar` escribe; exige una copia previa de la base (`doctor.db.antes-de-memoria-*`) y que las tablas estén vacías.
 
@@ -217,7 +219,7 @@ La base de datos no se borra; para empezar de cero eliminá `~/.local/share/pc-d
 ### Pruebas
 ```bash
 uv sync                          # instala también las dependencias de desarrollo (pytest, pytest-cov)
-uv run pytest                    # todo (519 pruebas, ~45 s)
+uv run pytest                    # todo (541 pruebas, ~45 s)
 uv run pytest -m "not lento"     # lo rápido (~9 s): es lo que corre el hook en cada commit
 uv run pytest -m "not local"     # lo que corre GitHub Actions
 uv run pytest --cov              # con cobertura
