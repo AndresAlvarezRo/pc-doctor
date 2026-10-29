@@ -743,18 +743,53 @@ def registrar_identidad(campo: str, valor: str) -> dict:
 
 
 @mcp.tool()
-def registrar_bitacora(seccion: str, tipo: str, titulo: str, contenido: str) -> dict:
-    """Registra en la bitácora una decisión de diseño, un error encontrado, una prueba o una limitación del proyecto. Usala para
-    cada decisión de diseño. `seccion`: por ejemplo 'Nivel nuevo 2: correlación'. `tipo`: decision, error, prueba, limitacion o
-    nota. `contenido` es markdown."""
-    return _con_memoria(lambda con: memoria.registrar_bitacora(con, seccion, tipo, titulo, contenido))
+def registrar_bitacora(seccion: str, tipo: str, titulo: str, resumen: str, modulos: str, contenido: str, fecha: str = "",
+                       archivos: str = "", prueba: str = "") -> dict:
+    """Registra un ítem en la bitácora del proyecto: una decisión, un error, una limitación, una prueba, un pendiente, una nota o
+    una invariante (regla que no se rompe). Usala para cada decisión de diseño. `seccion` y `titulo` agrupan (por ejemplo
+    'Nivel nuevo 7: ...' y 'Decisiones'); si la entrada no existe se crea. `tipo`: invariante, decision, error, limitacion,
+    prueba, pendiente o nota. `resumen`: UNA línea de hasta 120 caracteres. `modulos`: separados por coma (salud, seguridad,
+    actividad, correlacion, reporte, alertas, dashboard, memoria, datos, mcp, infra, git, sistema). `contenido`: un bullet de
+    primer nivel con sus subbullets, o un párrafo, en markdown. `archivos` (rutas, separadas por coma) y `prueba` (test que
+    protege el ítem) son opcionales. Devuelve el id del ítem."""
+    return _con_memoria(lambda con: memoria.registrar_bitacora(con, seccion, tipo, titulo, resumen, modulos, contenido, fecha, archivos, prueba))
 
 
 @mcp.tool()
-def buscar_bitacora(consulta: str, n: int = 5, completo: bool = False) -> dict:
-    """Busca en la bitácora del proyecto (texto completo, sin distinguir acentos) y devuelve las `n` entradas más relevantes
-    (máximo 20). Por defecto el contenido viene recortado; con `completo=True`, entero."""
-    return _con_memoria(lambda con: memoria.buscar_bitacora(con, consulta, n, completo))
+def buscar_bitacora(consulta: str, n: int = 5) -> dict:
+    """Busca en la bitácora del proyecto (texto completo, sin distinguir acentos) y devuelve los resúmenes de los `n` ítems más
+    relevantes (máximo 20), no el texto: para leer uno entero, `detalle_bitacora(id)`. Sirve para "¿por qué es así?"."""
+    return _con_memoria(lambda con: memoria.buscar_bitacora(con, consulta, n))
+
+
+@mcp.tool()
+def contexto(archivo: str = "", modulo: str = "", tipo: str = "", incluir_superadas: bool = False, n: int = 12) -> dict:
+    """Lo que hay que saber de la bitácora para una tarea, como resúmenes (id, tipo, módulos, resumen). Con `archivo`, se resuelve
+    su módulo con el mapa del proyecto; con `modulo`, ese módulo; sin ninguno, todos. `tipo` filtra (invariante, decision, error,
+    limitacion, prueba, pendiente, nota). Solo lo vigente, salvo `incluir_superadas=True`. Orden: invariantes, pendientes,
+    limitaciones, decisiones, errores, pruebas y notas. Las invariantes vigentes vienen siempre, aunque se pase de `n`.
+    Para leer un ítem entero, `detalle_bitacora(id)`."""
+    return _con_memoria(lambda con: memoria.contexto(con, archivo, modulo, tipo, incluir_superadas, n))
+
+
+@mcp.tool()
+def detalle_bitacora(id: int) -> dict:
+    """El contenido completo de un ítem de la bitácora, con su sección, fecha, módulos y archivos; si está superado, por cuál ítem."""
+    return _con_memoria(lambda con: memoria.detalle_bitacora(con, id))
+
+
+@mcp.tool()
+def pendientes(modulo: str = "") -> dict:
+    """Los ítems pendientes (vigentes) de la bitácora del proyecto, opcionalmente de un solo módulo. Usala para planificar."""
+    return _con_memoria(lambda con: memoria.pendientes(con, modulo))
+
+
+@mcp.tool()
+def marcar_superada(id: int, reemplazada_por: int, motivo: str) -> dict:
+    """Marca un ítem de la bitácora como superado por otro ítem vigente, con el motivo. Usala al decidir algo que contradice una
+    decisión anterior: primero registrá la nueva y después marcá la vieja. No borra nada. Una invariante solo se reemplaza si
+    el usuario lo pidió."""
+    return _con_memoria(lambda con: memoria.marcar_superada(con, id, reemplazada_por, motivo))
 
 
 @mcp.tool()

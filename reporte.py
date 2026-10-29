@@ -48,6 +48,8 @@ HERRAMIENTAS_PROHIBIDAS = [
     # memoria: la escribe un agente y podría arrastrar texto de los datos; las de escritura nunca, y las de lectura tampoco
     "recordar", "olvidar", "buscar_memoria", "memoria_reciente", "agregar_hecho_conocido", "retirar_hecho_conocido",
     "registrar_bitacora", "registrar_changelog", "resolver_changelog", "registrar_identidad",
+    # bitácora del proyecto: es del código, no de la PC (el reporte no la necesita)
+    "buscar_bitacora", "contexto", "detalle_bitacora", "pendientes", "marcar_superada",
 ]
 INTEGRADAS_PROHIBIDAS = ["Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent"]
 

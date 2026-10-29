@@ -60,7 +60,7 @@ def test_los_niveles_de_encabezado_siguen_a_la_seccion(con):
 
 def test_una_entrada_nueva_aparece_con_su_fecha_y_tipo(con):
     sembrar(con)
-    memoria.registrar_bitacora(con, "Nivel nuevo 3: otra cosa", "decision", "Usar tablas", "Se decidió usar tablas.", fecha="2026-11-02")
+    memoria.registrar_bitacora(con, "Nivel nuevo 3: otra cosa", "decision", "Usar tablas", "Usar tablas", "memoria", "Se decidió usar tablas.", fecha="2026-11-02")
     md = memoria.exportar_bitacora(con)
     assert md.rstrip().endswith("## Nivel nuevo 3: otra cosa\n\n### Usar tablas\n_2026-11-02 · decision_\n\nSe decidió usar tablas.")
 

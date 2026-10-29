@@ -15,7 +15,8 @@ import memoria
 import reporte
 import server
 
-TABLAS = {"memoria", "memoria_fts", "hechos_conocidos", "bitacora", "bitacora_fts", "changelog"}
+TABLAS = {"memoria", "memoria_fts", "hechos_conocidos", "bitacora", "bitacora_fts", "changelog",
+          "bitacora_items", "bitacora_items_fts", "bitacora_item_modulo", "bitacora_item_archivo"}
 MANANA = (date.today() + timedelta(days=1)).isoformat()
 AYER = (date.today() - timedelta(days=1)).isoformat()
 
@@ -39,7 +40,7 @@ def test_asegurar_crea_tablas_indices_y_triggers_y_se_puede_repetir(con):
     memoria.asegurar(con)
     assert tablas(con) == TABLAS
     triggers = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
-    assert {"memoria_ai", "memoria_ad", "memoria_au", "bitacora_ai", "bitacora_ad", "bitacora_au"} <= triggers
+    assert {"memoria_ai", "memoria_ad", "memoria_au", "bitacora_ai", "bitacora_ad", "bitacora_au", "bitacora_items_ai", "bitacora_items_ad", "bitacora_items_au"} <= triggers
     assert con.execute("SELECT sqlite_compileoption_used('ENABLE_FTS5')").fetchone()[0] == 1
 
 
@@ -67,7 +68,7 @@ def test_leer_con_la_base_en_solo_lectura_no_falla_si_las_tablas_no_existen(con,
 
 
 @pytest.mark.parametrize("escritura", [
-    lambda: server.recordar("t", "x"), lambda: server.agregar_hecho_conocido("x"), lambda: server.registrar_bitacora("s", "nota", "t", "c"),
+    lambda: server.recordar("t", "x"), lambda: server.agregar_hecho_conocido("x"), lambda: server.registrar_bitacora("s", "nota", "t", "resumen", "memoria", "c"),
     lambda: server.registrar_changelog("cambio", "cpu", "x")])
 def test_las_tools_de_escritura_si_crean_las_tablas(con, escritura):
     assert "error" not in escritura()
@@ -234,42 +235,55 @@ def test_los_hechos_conocidos_solo_se_escriben_con_la_intervencion_del_usuario_y
 
 
 # ---------- bitácora ----------
+# Los ítems, el contexto por módulo y el mapa de archivos se prueban en test_bitacora_items.py; acá, lo básico de registrar y buscar.
 
 CONTENIDO = "- **Decisión:** usar `FTS5`.\n- Y un segundo punto con acentos: él, ñandú.\n\n```\nbloque de código\n```\n"
 
 
+def reg(con, seccion, tipo, titulo, contenido, resumen="Resumen de prueba", modulos="memoria", **kw):
+    return memoria.registrar_bitacora(con, seccion, tipo, titulo, resumen, modulos, contenido, **kw)
+
+
 def test_registrar_en_la_bitacora_conserva_el_markdown_exacto(con):
-    r = memoria.registrar_bitacora(con, "Nivel nuevo 7: prueba", "decision", "Usar FTS5", CONTENIDO)
-    f = con.execute("SELECT * FROM bitacora WHERE id=?", (r["id"],)).fetchone()
-    assert (f["fecha"], f["seccion"], f["tipo"], f["titulo"], f["contenido"]) == (memoria.hoy(), "Nivel nuevo 7: prueba", "decision", "Usar FTS5", CONTENIDO.strip())
-    assert memoria.registrar_bitacora(con, "s", "nota", "t", "c", fecha="2026-10-28")["id"] and con.execute("SELECT fecha FROM bitacora ORDER BY id DESC").fetchone()[0] == "2026-10-28"
+    r = reg(con, "Nivel nuevo 7: prueba", "decision", "Usar FTS5", CONTENIDO)
+    f = con.execute("SELECT * FROM bitacora_items WHERE id=?", (r["id"],)).fetchone()
+    assert (f["fecha"], f["tipo"], f["contenido"], f["vigencia"]) == (memoria.hoy(), "decision", CONTENIDO.strip(), "vigente")
+    e = con.execute("SELECT * FROM bitacora WHERE id=?", (r["entrada"],)).fetchone()
+    assert (e["seccion"], e["titulo"], e["tipo"]) == ("Nivel nuevo 7: prueba", "Usar FTS5", "decision")
+    assert reg(con, "s", "nota", "t", "c", fecha="2026-10-28")["id"] and con.execute("SELECT fecha FROM bitacora_items ORDER BY id DESC").fetchone()[0] == "2026-10-28"
 
 
 @pytest.mark.parametrize("args,donde", [(("", "nota", "t", "c"), "seccion"), (("s", "otra", "t", "c"), "tipo"), (("s", "nota", "", "c"), "titulo"),
-                                        (("s", "nota", "t", ""), "contenido"), (("s", "nota", "t", "x" * 60001), "contenido"), (("s", "nota", "t", "c", "ayer"), "fecha")])
+                                        (("s", "nota", "t", ""), "contenido"), (("s", "nota", "t", "x" * 60001), "contenido")])
 def test_registrar_bitacora_rechaza_entradas_invalidas(con, args, donde):
     with pytest.raises(ValueError, match=donde):
-        memoria.registrar_bitacora(con, *args)
+        reg(con, *args)
+
+
+def test_registrar_bitacora_rechaza_fecha_invalida(con):
+    with pytest.raises(ValueError, match="fecha"):
+        reg(con, "s", "nota", "t", "c", fecha="ayer")
 
 
 def test_buscar_en_la_bitacora(con):
-    a = memoria.registrar_bitacora(con, "Nivel nuevo 2: correlación", "decision", "Kernel y driver fusionados", "El driver de la GPU viene con el kernel.")["id"]
-    b = memoria.registrar_bitacora(con, "Nivel nuevo 3: reporte", "limitacion", "Sin verificar", "Falta una ejecución real de claude.")["id"]
-    assert ids(memoria.buscar_bitacora(con, "CORRELACION")) == [a]                  # por sección y sin acentos
-    assert ids(memoria.buscar_bitacora(con, "driver")) == [a] and ids(memoria.buscar_bitacora(con, "ejecución real")) == [b]
+    a = reg(con, "Nivel nuevo 2: correlación", "decision", "Kernel y driver fusionados", "El driver de la GPU viene con el kernel.",
+            resumen="Kernel y driver de la GPU se tratan juntos")["id"]
+    b = reg(con, "Nivel nuevo 3: reporte", "limitacion", "Sin verificar", "Falta una ejecución real de claude.", resumen="Falta una ejecución real")["id"]
+    assert ids(memoria.buscar_bitacora(con, "driver")) == [a] and ids(memoria.buscar_bitacora(con, "ejecución real")) == [b]     # sin acentos y por contenido
     assert memoria.buscar_bitacora(con, "zzqx wwvk")["total"] == 0
 
 
-def test_la_bitacora_recorta_el_contenido_salvo_que_se_pida_completo(con):
-    memoria.registrar_bitacora(con, "s", "nota", "largo", "palabra " * 300)
-    assert len(memoria.buscar_bitacora(con, "palabra")["resultados"][0]["contenido"]) <= 400
-    assert len(memoria.buscar_bitacora(con, "palabra", completo=True)["resultados"][0]["contenido"]) > 1000
+def test_sin_items_la_busqueda_cae_a_las_secciones_de_antes(con):
+    memoria.asegurar(con)
+    con.execute("INSERT INTO bitacora (fecha, seccion, tipo, titulo, contenido) VALUES ('2026-10-28','Nivel nuevo 2: correlación','decision','Kernel','El driver viene con el kernel.')")
+    r = memoria.buscar_bitacora(con, "CORRELACION")
+    assert ids(r) == [1] and "Sin ítems" in r["nota"] and r["resultados"][0]["titulo"] == "Kernel"
 
 
-def test_el_titulo_pesa_mas_que_el_contenido_en_la_bitacora(con):
-    en_contenido = memoria.registrar_bitacora(con, "s", "nota", "otra cosa", "se mencionó el hook de pasada")["id"]
-    en_titulo = memoria.registrar_bitacora(con, "s", "decision", "El hook", "detalles varios")["id"]
-    assert ids(memoria.buscar_bitacora(con, "hook"))[0] == en_titulo and en_contenido in ids(memoria.buscar_bitacora(con, "hook"))
+def test_el_resumen_pesa_mas_que_el_contenido_en_la_bitacora(con):
+    en_contenido = reg(con, "s", "nota", "otra cosa", "se mencionó el hook de pasada", resumen="Algo sin relación")["id"]
+    en_resumen = reg(con, "s", "decision", "El hook", "detalles varios", resumen="El hook corre las pruebas")["id"]
+    assert ids(memoria.buscar_bitacora(con, "hook"))[0] == en_resumen and en_contenido in ids(memoria.buscar_bitacora(con, "hook"))
 
 
 # ---------- changelog ----------
@@ -314,9 +328,9 @@ NUEVAS = {"recordar", "buscar_memoria", "olvidar", "memoria_reciente", "hechos_c
 ESCRITURA = {"recordar", "olvidar", "agregar_hecho_conocido", "retirar_hecho_conocido", "registrar_bitacora", "registrar_changelog", "resolver_changelog"}
 
 
-def test_las_12_tools_nuevas_estan_registradas():
+def test_las_tools_nuevas_estan_registradas():
     reales = {t.name for t in server.mcp._tool_manager.list_tools()}
-    assert NUEVAS <= reales and len(reales) == 36
+    assert NUEVAS <= reales and len(reales) == 40
 
 
 def test_las_tools_funcionan_de_punta_a_punta(con):
@@ -325,7 +339,7 @@ def test_las_tools_funcionan_de_punta_a_punta(con):
     assert "Olvidado" in server.olvidar(i)["mensaje"] and server.buscar_memoria("sectores")["total"] == 0
     h = server.agregar_hecho_conocido("sdb anda mal", "sdb", MANANA)["id"]
     assert server.hechos_conocidos("sdb")["activos"][0]["id"] == h and "retirado" in server.retirar_hecho_conocido(h)["mensaje"]
-    server.registrar_bitacora("Nivel 9", "decision", "Algo", "Contenido de la decisión")
+    server.registrar_bitacora("Nivel 9", "decision", "Algo", "Una decisión de prueba", "memoria", "Contenido de la decisión")
     assert server.buscar_bitacora("decisión")["total"] == 1
     c = server.registrar_changelog("error", "gpu", "Temperatura alta")["id"]
     assert server.changelog_abierto()["total"] == 1 and "resuelta" in server.resolver_changelog(c, "Se limpió el polvo")["mensaje"]
@@ -334,7 +348,7 @@ def test_las_tools_funcionan_de_punta_a_punta(con):
 
 def test_las_tools_devuelven_errores_en_vez_de_excepciones():
     assert "error" in server.recordar("", "x") and "error" in server.agregar_hecho_conocido("x", "", "no-es-fecha")
-    assert "error" in server.registrar_bitacora("s", "inventado", "t", "c") and "error" in server.registrar_changelog("error", "cpu", "x", "medio")
+    assert "error" in server.registrar_bitacora("s", "inventado", "t", "r", "memoria", "c") and "error" in server.registrar_changelog("error", "cpu", "x", "medio")
 
 
 def test_el_reporte_semanal_no_puede_usar_ninguna_tool_de_escritura_de_memoria():

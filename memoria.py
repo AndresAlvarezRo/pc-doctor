@@ -1,9 +1,10 @@
 """Memoria de pc-doctor en tablas de doctor.db, consultable por el MCP.
 
-Cuatro tablas:
+Estas tablas:
 - `memoria`: lo que el agente aprende en las sesiones (hechos, decisiones, preferencias, observaciones), con búsqueda de texto completo (FTS5).
 - `hechos_conocidos`: lo que el USUARIO declara como sabido, para que el sistema no lo trate como novedad. Solo se escriben con su intervención.
-- `bitacora`: las decisiones, errores, pruebas y limitaciones del proyecto.
+- `bitacora`: las decisiones, errores, pruebas y limitaciones del proyecto, agrupadas por sección; su contenido son los ítems de `bitacora_items`
+  (tipo, vigencia, módulos, archivos y un resumen de una línea), que es lo que se busca y se entrega por tarea (ver `modulos.py`).
 - `changelog`: la historia de la PC (errores, soluciones, cambios y observaciones).
 
 El esquema es aparte del de `db.ESQUEMA` a propósito: `db.conectar()` aplica `db.ESQUEMA` en cada corrida del recolector, y estas tablas
@@ -20,15 +21,21 @@ from datetime import date
 from pathlib import Path
 
 import db
+import modulos as mapa      # el parámetro `modulos` de las funciones taparía al módulo
 
 TIPOS_MEMORIA = ("hecho", "decision", "preferencia", "observacion")
 ORIGENES = ("agente", "usuario")
-TIPOS_BITACORA = ("decision", "error", "prueba", "limitacion", "nota")
+TIPOS_BITACORA = ("decision", "error", "prueba", "limitacion", "nota")      # los de la entrada (agrupación)
+TIPOS_ITEM = ("invariante", "decision", "error", "limitacion", "prueba", "pendiente", "nota")
+ORDEN_TIPOS = ("invariante", "pendiente", "limitacion", "decision", "error", "prueba", "nota")     # qué se muestra primero en `contexto`
+VIGENCIAS = ("vigente", "superada", "historica")
+TIPO_DE_ENTRADA = {"invariante": "decision", "pendiente": "nota"}           # los tipos de ítem que la entrada no tiene
 TIPOS_CHANGELOG = ("error", "solucion", "cambio", "observacion")
 ESTADOS_CHANGELOG = ("abierto", "resuelto")
 
 MAX_TEMA, MAX_TEXTO = 80, 4000
 MAX_SECCION, MAX_TITULO, MAX_CONTENIDO = 200, 200, 60000
+MAX_RESUMEN, MAX_PRUEBA, MAX_MOTIVO, MAX_ARCHIVO = 120, 200, 300, 300
 MAX_COMPONENTE, MAX_DETALLE = 80, 12000
 MAX_APLICA_A = 200
 RESUMEN = 280          # largo de los textos en las listas compactas
@@ -104,6 +111,48 @@ END;
 CREATE TRIGGER IF NOT EXISTS bitacora_au AFTER UPDATE ON bitacora BEGIN
     INSERT INTO bitacora_fts(bitacora_fts, rowid, seccion, titulo, contenido) VALUES ('delete', old.id, old.seccion, old.titulo, old.contenido);
     INSERT INTO bitacora_fts(rowid, seccion, titulo, contenido) VALUES (new.id, new.seccion, new.titulo, new.contenido);
+END;
+
+-- Ítems atómicos de la bitácora: `bitacora` queda como agrupación (sección y título) y cada ítem es un bullet de primer nivel
+-- con sus subbullets, o un párrafo. Sobre los ítems se busca y se arma el contexto de cada tarea.
+CREATE TABLE IF NOT EXISTS bitacora_items (
+    id INTEGER PRIMARY KEY,
+    entrada_id INTEGER NOT NULL REFERENCES bitacora(id),
+    orden INTEGER NOT NULL,         -- posición dentro de la entrada: es el orden en que se exporta
+    fecha TEXT NOT NULL,            -- AAAA-MM-DD
+    tipo TEXT NOT NULL CHECK (tipo IN ('invariante','decision','error','limitacion','prueba','pendiente','nota')),
+    vigencia TEXT NOT NULL DEFAULT 'vigente' CHECK (vigencia IN ('vigente','superada','historica')),
+    reemplazada_por INTEGER REFERENCES bitacora_items(id) CHECK (reemplazada_por IS NULL OR reemplazada_por <> id),
+    motivo TEXT,
+    resumen TEXT NOT NULL,          -- una línea, hasta 120 caracteres
+    contenido TEXT NOT NULL,        -- el texto original, tal cual (markdown)
+    prueba TEXT                     -- nombre del test que protege el ítem (sobre todo en las invariantes)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bitacora_items_orden ON bitacora_items(entrada_id, orden);
+CREATE INDEX IF NOT EXISTS idx_bitacora_items_tipo ON bitacora_items(vigencia, tipo, fecha);
+CREATE TABLE IF NOT EXISTS bitacora_item_modulo (
+    item_id INTEGER NOT NULL REFERENCES bitacora_items(id),
+    modulo TEXT NOT NULL,
+    PRIMARY KEY (item_id, modulo)
+);
+CREATE INDEX IF NOT EXISTS idx_bitacora_item_modulo ON bitacora_item_modulo(modulo, item_id);
+CREATE TABLE IF NOT EXISTS bitacora_item_archivo (
+    item_id INTEGER NOT NULL REFERENCES bitacora_items(id),
+    ruta TEXT NOT NULL,
+    PRIMARY KEY (item_id, ruta)
+);
+CREATE INDEX IF NOT EXISTS idx_bitacora_item_archivo ON bitacora_item_archivo(ruta);
+CREATE VIRTUAL TABLE IF NOT EXISTS bitacora_items_fts USING fts5(
+    resumen, contenido, content='bitacora_items', content_rowid='id', tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER IF NOT EXISTS bitacora_items_ai AFTER INSERT ON bitacora_items BEGIN
+    INSERT INTO bitacora_items_fts(rowid, resumen, contenido) VALUES (new.id, new.resumen, new.contenido);
+END;
+CREATE TRIGGER IF NOT EXISTS bitacora_items_ad AFTER DELETE ON bitacora_items BEGIN
+    INSERT INTO bitacora_items_fts(bitacora_items_fts, rowid, resumen, contenido) VALUES ('delete', old.id, old.resumen, old.contenido);
+END;
+CREATE TRIGGER IF NOT EXISTS bitacora_items_au AFTER UPDATE ON bitacora_items BEGIN
+    INSERT INTO bitacora_items_fts(bitacora_items_fts, rowid, resumen, contenido) VALUES ('delete', old.id, old.resumen, old.contenido);
+    INSERT INTO bitacora_items_fts(rowid, resumen, contenido) VALUES (new.id, new.resumen, new.contenido);
 END;
 
 CREATE TABLE IF NOT EXISTS changelog (
@@ -426,28 +475,219 @@ def identidad_declarada(con) -> list:
 
 
 # ---------- bitácora ----------
+# `bitacora` agrupa (sección y título); lo que se busca, se filtra y se entrega al agente son los ítems de `bitacora_items`.
 
-def registrar_bitacora(con, seccion: str, tipo: str, titulo: str, contenido: str, fecha: str = "") -> dict:
+MAX_CONTEXTO = 50
+
+
+def _lista(valor, campo: str, maximo: int) -> list[str]:
+    """Lista de textos desde una lista o desde un texto separado por comas o saltos de línea; sin vacíos ni repetidos."""
+    partes = re.split(r"[,\n]", valor) if isinstance(valor, str) else [str(p) for p in (valor or [])]
+    out: list[str] = []
+    for p in (x.strip() for x in partes):
+        if len(p) > maximo:
+            raise ValueError(f"En `{campo}`, un valor es demasiado largo ({len(p)} caracteres; el máximo es {maximo}).")
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
+def _modulo(valor: str) -> str:
+    v = (valor or "").strip().lower()
+    if v not in mapa.MODULOS:
+        raise ValueError(f"Módulo desconocido: `{valor}`. Los válidos son: {', '.join(mapa.MODULOS)}.")
+    return v
+
+
+def _resumen(valor: str) -> str:
+    v = _texto(valor, "resumen", MAX_RESUMEN)
+    if "\n" in v:
+        raise ValueError("`resumen` es una sola línea.")
+    return v
+
+
+def crear_item(con, entrada_id: int, fecha: str, tipo: str, resumen: str, contenido: str, modulos: list[str], archivos=(),
+               prueba: str = "", vigencia: str = "vigente", orden: int | None = None) -> int:
+    """Inserta un ítem (con sus módulos y archivos) al final de la entrada. No valida ni confirma: eso lo hace quien llama."""
+    if orden is None:
+        orden = con.execute("SELECT COALESCE(MAX(orden), 0) + 1 FROM bitacora_items WHERE entrada_id=?", (entrada_id,)).fetchone()[0]
+    cur = con.execute("INSERT INTO bitacora_items (entrada_id, orden, fecha, tipo, vigencia, resumen, contenido, prueba) VALUES (?,?,?,?,?,?,?,?)",
+                      (entrada_id, orden, fecha, tipo, vigencia, resumen, contenido, prueba or None))
+    con.executemany("INSERT INTO bitacora_item_modulo (item_id, modulo) VALUES (?,?)", [(cur.lastrowid, m) for m in modulos])
+    con.executemany("INSERT INTO bitacora_item_archivo (item_id, ruta) VALUES (?,?)", [(cur.lastrowid, a) for a in archivos])
+    return cur.lastrowid
+
+
+def registrar_bitacora(con, seccion: str, tipo: str, titulo: str, resumen: str, modulos, contenido: str, fecha: str = "",
+                       archivos=None, prueba: str = "") -> dict:
+    """Crea un ítem de la bitácora (y la entrada `seccion` / `titulo` si todavía no existe). Devuelve el id del ÍTEM."""
     seccion, titulo = _texto(seccion, "seccion", MAX_SECCION), _texto(titulo, "titulo", MAX_TITULO)
+    tipo, resumen = _opcion(tipo, TIPOS_ITEM, "tipo"), _resumen(resumen)
     contenido = _texto(contenido, "contenido", MAX_CONTENIDO)
-    tipo = _opcion(tipo, TIPOS_BITACORA, "tipo")
+    lista_modulos = [_modulo(m) for m in _lista(modulos, "modulos", 40)]
+    if not lista_modulos:
+        raise ValueError(f"`modulos` no puede estar vacío. Los válidos son: {', '.join(mapa.MODULOS)}.")
+    lista_archivos = [mapa.normalizar(a) for a in _lista(archivos, "archivos", MAX_ARCHIVO)]
+    prueba = _texto(prueba, "prueba", MAX_PRUEBA, obligatorio=False)
     fecha = _fecha(fecha, "fecha") if (fecha or "").strip() else hoy()
     asegurar(con)
-    cur = con.execute("INSERT INTO bitacora (fecha, seccion, tipo, titulo, contenido) VALUES (?,?,?,?,?)", (fecha, seccion, tipo, titulo, contenido))
+    entrada = con.execute("SELECT id, contenido FROM bitacora WHERE seccion=? AND titulo=? ORDER BY id DESC LIMIT 1", (seccion, titulo)).fetchone()
+    if entrada is None:
+        entrada_id = con.execute("INSERT INTO bitacora (fecha, seccion, tipo, titulo, contenido) VALUES (?,?,?,?,'')",
+                                 (fecha, seccion, TIPO_DE_ENTRADA.get(tipo, tipo), titulo)).lastrowid
+    else:
+        entrada_id = entrada["id"]
+        if entrada["contenido"] and not con.execute("SELECT 1 FROM bitacora_items WHERE entrada_id=?", (entrada_id,)).fetchone():
+            raise ValueError("Esa entrada todavía tiene su texto sin dividir en ítems: agregarle uno ahora lo sacaría del archivo exportado. "
+                             "Usá otro título o migrala primero.")
+    item = crear_item(con, entrada_id, fecha, tipo, resumen, contenido, lista_modulos, lista_archivos, prueba)
     con.commit()
-    return {"id": cur.lastrowid, "mensaje": "Registrado en la bitácora."}
+    return {"id": item, "entrada": entrada_id, "mensaje": "Registrado en la bitácora."}
 
 
-def buscar_bitacora(con, consulta: str, n: int = 5, completo: bool = False) -> dict:
+def _modulos_de_items(con, ids: list[int]) -> dict[int, list[str]]:
+    out: dict[int, list[str]] = {i: [] for i in ids}
+    for i in range(0, len(ids), 500):
+        lote = ids[i:i + 500]
+        for f in con.execute(f"SELECT item_id, modulo FROM bitacora_item_modulo WHERE item_id IN ({','.join('?' * len(lote))}) ORDER BY modulo", lote):
+            out[f["item_id"]].append(f["modulo"])
+    return out
+
+
+def _item_compacto(f, mods: dict[int, list[str]]) -> dict:
+    d = {"id": f["id"], "tipo": f["tipo"], "modulos": mods.get(f["id"], []), "resumen": f["resumen"]}
+    if f["vigencia"] != "vigente":
+        d["vigencia"] = f["vigencia"]
+    if f["reemplazada_por"]:
+        d["reemplazada_por"] = f["reemplazada_por"]
+    return d
+
+
+def _hay_items(con) -> bool:
+    return existe(con, "bitacora_items") and con.execute("SELECT 1 FROM bitacora_items LIMIT 1").fetchone() is not None
+
+
+def buscar_bitacora(con, consulta: str, n: int = 5) -> dict:
+    """Busca sobre los ítems (resumen y contenido) y devuelve resúmenes, no bloques; el contenido está en `detalle_bitacora`.
+    Mientras la base no tenga ítems, cae a la búsqueda por sección de antes."""
     n = max(1, min(int(n), MAX_RESULTADOS))
     if not existe(con, "bitacora"):
         return {"total": 0, "resultados": [], "nota": "La bitácora todavía no tiene entradas en la base."}
     if consulta_fts(consulta) is None:
         return {"error": "Escribí al menos una palabra para buscar."}
-    filas = _buscar(con, "bitacora", "bitacora_fts", "t.*", "3.0, 5.0, 1.0", "", consulta, n)
-    return {"total": len(filas), "resultados": [
-        {"id": f["id"], "fecha": f["fecha"], "seccion": f["seccion"], "tipo": f["tipo"], "titulo": f["titulo"],
-         "contenido": f["contenido"] if completo else corto(f["contenido"], 400)} for f in filas]}
+    if not _hay_items(con):
+        filas = _buscar(con, "bitacora", "bitacora_fts", "t.*", "3.0, 5.0, 1.0", "", consulta, n)
+        return {"total": len(filas), "nota": "Sin ítems todavía: resultados por sección.", "resultados": [
+            {"id": f["id"], "fecha": f["fecha"], "seccion": f["seccion"], "tipo": f["tipo"], "titulo": f["titulo"],
+             "contenido": corto(f["contenido"], 400)} for f in filas]}
+    filas = _buscar(con, "bitacora_items", "bitacora_items_fts", "t.*", "5.0, 1.0", "", consulta, n)
+    mods = _modulos_de_items(con, [f["id"] for f in filas])
+    return {"total": len(filas), "resultados": [_item_compacto(f, mods) for f in filas]}
+
+
+def contexto(con, archivo: str | None = None, modulo: str | None = None, tipo: str | None = None,
+             incluir_superadas: bool = False, n: int = 12) -> dict:
+    """Resúmenes de la bitácora para una tarea. `archivo` se resuelve a su módulo con el mapa (y suma los ítems que lo nombran);
+    sin `archivo` ni `modulo` son todos. Orden: invariantes, pendientes, limitaciones, decisiones, errores, pruebas, notas. Las
+    invariantes vigentes se incluyen siempre, aunque se pase de `n`."""
+    n = max(1, min(int(n), MAX_CONTEXTO))
+    tipo = _opcion(tipo, TIPOS_ITEM, "tipo") if (tipo or "").strip() else None
+    de_modulos = [_modulo(modulo)] if (modulo or "").strip() else []
+    ruta = mapa.normalizar(archivo) if (archivo or "").strip() else None
+    if ruta:
+        encontrados = mapa.modulos_de(ruta)
+        if not encontrados and not de_modulos:
+            raise ValueError(f"`{ruta}` no está en ningún módulo del mapa: pasá `modulo`.")
+        de_modulos += [m for m in encontrados if m not in de_modulos]
+    if not _hay_items(con):
+        return {"total": 0, "items": [], "nota": "La bitácora todavía no tiene ítems en la base."}
+    donde, par = [], []
+    if de_modulos or ruta:
+        partes = []
+        if de_modulos:
+            partes.append(f"i.id IN (SELECT item_id FROM bitacora_item_modulo WHERE modulo IN ({','.join('?' * len(de_modulos))}))")
+            par += de_modulos
+        if ruta:
+            partes.append("i.id IN (SELECT item_id FROM bitacora_item_archivo WHERE ruta = ?)")
+            par.append(ruta)
+        donde.append("(" + " OR ".join(partes) + ")")
+    if tipo:
+        donde.append("i.tipo = ?")
+        par.append(tipo)
+    if not incluir_superadas:
+        donde.append("i.vigencia = 'vigente'")
+    orden = "CASE i.tipo " + " ".join(f"WHEN '{t}' THEN {k}" for k, t in enumerate(ORDEN_TIPOS)) + " END"
+    filas = con.execute(f"SELECT i.* FROM bitacora_items i {'WHERE ' + ' AND '.join(donde) if donde else ''} "
+                        f"ORDER BY (i.vigencia <> 'vigente'), {orden}, i.fecha DESC, i.id DESC", par).fetchall()
+    fijas = [f for f in filas if f["tipo"] == "invariante" and f["vigencia"] == "vigente"] if tipo in (None, "invariante") else []
+    ids_fijas = {f["id"] for f in fijas}
+    resto = [f for f in filas if f["id"] not in ids_fijas]
+    cupo = len(resto) if tipo == "invariante" else max(0, n - len(fijas))
+    elegidas = fijas + resto[:cupo]
+    mods = _modulos_de_items(con, [f["id"] for f in elegidas])
+    out = {"total": len(filas), "items": [_item_compacto(f, mods) for f in elegidas]}
+    if ruta:
+        out["modulos"] = de_modulos
+    if len(elegidas) < len(filas):
+        out["omitidos"] = len(filas) - len(elegidas)
+    return out
+
+
+def _item(con, ident) -> sqlite3.Row:
+    f = con.execute("SELECT i.*, b.seccion, b.titulo AS entrada FROM bitacora_items i JOIN bitacora b ON b.id = i.entrada_id WHERE i.id=?",
+                    (int(ident),)).fetchone() if existe(con, "bitacora_items") else None
+    if f is None:
+        raise ValueError(f"No existe el ítem #{ident} en la bitácora.")
+    return f
+
+
+def detalle_bitacora(con, ident: int) -> dict:
+    f = _item(con, ident)
+    out = {"id": f["id"], "seccion": f["seccion"], "entrada": f["entrada"], "fecha": f["fecha"], "tipo": f["tipo"], "vigencia": f["vigencia"],
+           "modulos": _modulos_de_items(con, [f["id"]])[f["id"]],
+           "archivos": [a["ruta"] for a in con.execute("SELECT ruta FROM bitacora_item_archivo WHERE item_id=? ORDER BY ruta", (f["id"],))],
+           "resumen": f["resumen"], "contenido": f["contenido"]}
+    if f["prueba"]:
+        out["prueba"] = f["prueba"]
+    if f["reemplazada_por"]:
+        r = con.execute("SELECT id, resumen FROM bitacora_items WHERE id=?", (f["reemplazada_por"],)).fetchone()
+        out["reemplazada_por"] = {"id": r["id"], "resumen": r["resumen"]} if r else {"id": f["reemplazada_por"]}
+        out["motivo"] = f["motivo"]
+    anteriores = [r["id"] for r in con.execute("SELECT id FROM bitacora_items WHERE reemplazada_por=? ORDER BY id", (f["id"],))]
+    if anteriores:
+        out["reemplaza"] = anteriores
+    return out
+
+
+def pendientes(con, modulo: str | None = None) -> dict:
+    """Los ítems `pendiente` vigentes, del más nuevo al más viejo; con `modulo`, solo los de ese módulo."""
+    de_modulo = _modulo(modulo) if (modulo or "").strip() else None
+    if not _hay_items(con):
+        return {"total": 0, "pendientes": [], "nota": "La bitácora todavía no tiene ítems en la base."}
+    filtro = "AND i.id IN (SELECT item_id FROM bitacora_item_modulo WHERE modulo = ?)" if de_modulo else ""
+    filas = con.execute(f"SELECT i.* FROM bitacora_items i WHERE i.tipo='pendiente' AND i.vigencia='vigente' {filtro} "
+                        "ORDER BY i.fecha DESC, i.id DESC", (de_modulo,) if de_modulo else ()).fetchall()
+    mods = _modulos_de_items(con, [f["id"] for f in filas[:MAX_CONTEXTO]])
+    out = {"total": len(filas), "pendientes": [{**_item_compacto(f, mods), "fecha": f["fecha"]} for f in filas[:MAX_CONTEXTO]]}
+    if len(filas) > MAX_CONTEXTO:
+        out["omitidos"] = len(filas) - MAX_CONTEXTO
+    return out
+
+
+def marcar_superada(con, ident: int, reemplazada_por: int, motivo: str) -> dict:
+    """Marca un ítem como superado por otro ítem vigente. No borra nada: el ítem queda como historia, con su reemplazo y el motivo."""
+    motivo = _texto(motivo, "motivo", MAX_MOTIVO)
+    viejo, nuevo = _item(con, ident), _item(con, reemplazada_por)
+    if viejo["id"] == nuevo["id"]:
+        raise ValueError("Un ítem no puede reemplazarse a sí mismo.")
+    if viejo["vigencia"] == "superada":
+        raise ValueError(f"El ítem #{viejo['id']} ya está superado por #{viejo['reemplazada_por']}.")
+    if nuevo["vigencia"] != "vigente":
+        raise ValueError(f"El ítem #{nuevo['id']} no está vigente: indicá el que realmente reemplaza.")
+    con.execute("UPDATE bitacora_items SET vigencia='superada', reemplazada_por=?, motivo=? WHERE id=?", (nuevo["id"], motivo, viejo["id"]))
+    _auditar(con, "marcar_superada", {"id": viejo["id"], "reemplazada_por": nuevo["id"], "motivo": motivo}, f"#{viejo['id']} superado por #{nuevo['id']}")
+    con.commit()
+    return {"id": viejo["id"], "mensaje": f"El ítem #{viejo['id']} quedó superado por #{nuevo['id']}."}
 
 
 # ---------- changelog ----------
@@ -509,8 +749,21 @@ SECCION_INTRO = "Introducción"
 TIPO_CHANGELOG_TEXTO = {"error": "error", "solucion": "solución", "cambio": "cambio", "observacion": "observación"}
 
 
+def _cuerpo_de(con, entrada, con_items: bool) -> str:
+    """El texto de una entrada: sus ítems en orden (cada bullet pegado al anterior; un párrafo, separado por una línea en blanco) o,
+    si no tiene ítems, su `contenido`."""
+    items = con.execute("SELECT contenido FROM bitacora_items WHERE entrada_id=? ORDER BY orden", (entrada["id"],)).fetchall() if con_items else []
+    if not items:
+        return entrada["contenido"]
+    cuerpo = items[0]["contenido"]
+    for it in items[1:]:
+        cuerpo += ("\n" if it["contenido"].startswith(("- ", "  ")) else "\n\n") + it["contenido"]
+    return cuerpo
+
+
 def exportar_bitacora(con) -> str:
     """Markdown de la bitácora: una sección `##` por `seccion` (o `##` + `###` si trae ` / `) y un encabezado por entrada, con su fecha y tipo."""
+    con_items = existe(con, "bitacora_items")
     out = ["# Bitácora de pc-doctor", "", AVISO_GENERADO.format(tabla="bitacora", tool="registrar_bitacora"), "", INTRO_BITACORA]
     anterior: list[str] = []
     for f in con.execute("SELECT * FROM bitacora ORDER BY id"):
@@ -520,9 +773,9 @@ def exportar_bitacora(con) -> str:
                 out += ["", f"{'#' * (i + 2)} {parte}"]
         anterior = ruta
         if f["titulo"] == SECCION_INTRO:          # el texto que va antes de los subtítulos de la sección, sin encabezado propio
-            out += ["", f["contenido"]]
+            out += ["", _cuerpo_de(con, f, con_items)]
             continue
-        out += ["", f"{'#' * (len(ruta) + 2)} {f['titulo']}", f"_{f['fecha']} · {f['tipo']}_", "", f["contenido"]]
+        out += ["", f"{'#' * (len(ruta) + 2)} {f['titulo']}", f"_{f['fecha']} · {f['tipo']}_", "", _cuerpo_de(con, f, con_items)]
     return "\n".join(out) + "\n"
 
 
