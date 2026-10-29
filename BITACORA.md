@@ -1539,7 +1539,61 @@ _2026-10-29 · limitacion_
 _2026-10-29 · nota_
 <!-- entrada {"id":110,"seccion":"Windows: fase 3, ayudante con privilegios","titulo":"Cierre de la fase 3","fecha":"2026-10-29","tipo":"nota"} -->
 
-<!-- item {"id":416,"tipo":"pendiente","vigencia":"vigente","fecha":"2026-10-29","resumen":"Pendiente: `instalar.ps1` ofrece el ayudante, `empaquetar.py` incluye `instalador/` y la guía lo explica","modulos":["instalador","windows"]} -->
+<!-- item {"id":416,"tipo":"pendiente","vigencia":"superada","fecha":"2026-10-29","resumen":"Pendiente: `instalar.ps1` ofrece el ayudante, `empaquetar.py` incluye `instalador/` y la guía lo explica","modulos":["instalador","windows"],"reemplazada_por":422,"motivo":"Las fases 5 y 6 ya incluyen el ayudante en el paquete y lo ofrecen; queda probar en Windows real"} -->
 - **Fase 5:** el paquete lleva `instalador/ayudante.ps1`, `habilitar-sensores.ps1` y `versiones.toml` (en la raíz del zip, como pidió el usuario) y `empaquetar.py` falla si algún `.ps1` perdió el BOM.
   - **Fase 6:** `instalar.ps1` ofrece el ayudante al final y `-Verificar` informa si hay datos recientes de `estado.json`.
   - **Fase 7:** documentar en lenguaje simple qué agrega el ayudante, cómo verlo y cómo deshacerlo.
+  (superada por #422: Las fases 5 y 6 ya incluyen el ayudante en el paquete y lo ofrecen; queda probar en Windows real)
+
+## Windows: fases 4 a 6, paquete e instalador
+
+### Nada de esta PC viaja en el paquete
+_2026-10-29 · decision_
+<!-- entrada {"id":111,"seccion":"Windows: fases 4 a 6, paquete e instalador","titulo":"Nada de esta PC viaja en el paquete","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":417,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"`empaquetar.py` usa lista blanca y falla ante EICAR, ejecutables, .ps1 sin BOM, rutas de esta PC o frontend viejo","modulos":["instalador"],"archivos":["config.ejemplo.json","empaquetar.py","plantillas/CLAUDE.usuario.md"],"prueba":"tests/test_empaquetar.py::test_verificar_rechaza"} -->
+- **Lista blanca:** código de producción, `plataforma/`, `web/api.py`, el frontend compilado, `pyproject.toml`, `uv.lock`, `config.ejemplo.json`, `plantillas/` y todo `instalador/` en la raíz del zip. Nunca pruebas, git, scripts de desarrollo, capturas, `doctor.db`, `config.json`, `web_token`, bitácora ni changelog.
+  - **Falla sin generar el zip** si hay la cadena EICAR (Defender pondría el zip entero en cuarentena; está armada por partes para no marcar al propio script), un ejecutable de Windows (`MZ`), un `.ps1` sin BOM (idea propia: PowerShell 5.1 rompería los acentos), una ruta absoluta de esta PC, o si `web/frontend/dist` falta o es más viejo que su código.
+  - **Zip determinista** (fechas fijas, orden fijo): el mismo contenido da el mismo SHA-256. Sale a `paquetes/` (ignorado por git) con su `.sha256`.
+
+### Windows exporta solo el changelog
+_2026-10-29 · decision_
+<!-- entrada {"id":112,"seccion":"Windows: fases 4 a 6, paquete e instalador","titulo":"Windows exporta solo el changelog","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":418,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"En Windows el recolector exporta solo `CHANGELOG.md` (con la identidad manual) a la carpeta de datos","modulos":["datos","windows"],"archivos":["collector.py","memoria.py"],"prueba":"tests/test_windows_portado.py::test_el_exportador_de_windows_deja_el_changelog_en_la_carpeta_de_datos"} -->
+- **Por qué:** no hay repo ni hook pre-commit. `memoria.exportar` acepta `archivos=` para filtrar; en Linux el comportamiento no cambia. Es un paso más del recolector, solo en Windows, y no reescribe el archivo si no cambió.
+  - **`plantillas/CLAUDE.usuario.md`** tiene solo reglas de usuario (memoria de la PC, changelog, hechos solo a pedido), sin git, pruebas ni bitácora. `instalar.ps1` la agrega al final del CLAUDE.md del usuario solo si falta su encabezado.
+
+### Tareas sin ventana con lanzador.pyw
+_2026-10-29 · decision_
+<!-- entrada {"id":113,"seccion":"Windows: fases 4 a 6, paquete e instalador","titulo":"Tareas sin ventana con lanzador.pyw","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":419,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Las tareas corren `pythonw.exe lanzador.pyw`, que redirige stdout y stderr a un log rotado en la carpeta de datos","modulos":["instalador"],"archivos":["instalador/lanzador.pyw","reporte.py"],"prueba":"tests/test_lanzador.py::test_la_salida_del_programa_va_al_log"} -->
+- **Por qué:** pythonw no tiene consola y se perdería el log del recolector y de uvicorn. El log va a `%LOCALAPPDATA%\pc-doctor\logs\<nombre>.log` y se rota a `.1` pasado 1 MB. `-m modulo` lanza uvicorn.
+  - **`reporte.py` portado sin cambiar Linux:** `killpg`→`taskkill /T /F`, `start_new_session`→`creationflags` sin ventana, separador de PATH con `os.pathsep`, `claude.exe`, `rename`→`os.replace` y búsqueda de `uv` en `herramientas\`.
+
+### instalar.ps1 sin administrador
+_2026-10-29 · decision_
+<!-- entrada {"id":114,"seccion":"Windows: fases 4 a 6, paquete e instalador","titulo":"instalar.ps1 sin administrador","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":420,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"`instalar.ps1` instala para el usuario (uv fijado, tareas, accesos, MCP) y ofrece el ayudante sin ejecutarlo","modulos":["instalador"],"archivos":["instalador/PROMPT-VERIFICACION.md","instalador/instalar.ps1","instalador/versiones.toml"],"prueba":"tests/test_instalador.py::test_instalar_no_pide_administrador_y_las_tareas_corren_con_privilegios_limitados"} -->
+- **uv** 0.13.6 fijado en `versiones.toml` (SHA-256 verificado contra GitHub y contra la descarga); si uv ya existe se usa. Python lo baja uv. `uv sync --frozen --no-dev`.
+  - **Tareas** de usuario, `RunLevel Limited`: recolector (inicio de sesión y cada 15 min), reporte (domingos 20:00, `StartWhenAvailable`), dashboard (inicio de sesión, reinicio si falla, solo 127.0.0.1). Re-registrar reemplaza: es idempotente.
+  - **Claude Code:** `claude mcp add -s user`; el CLAUDE.md del usuario solo se amplía (`AppendAllText`), nunca se pisa. Sin Claude Code se avisa (necesita Git for Windows) y se sigue.
+  - **`-Desinstalar` no borra los datos** y se niega si el ayudante sigue instalado. **`-Verificar`** solo lee. **`-Simular`** no cambia nada.
+  - `PROMPT-VERIFICACION.md` es el prompt para la sesión de verificación en la PC instalada (no modifica código; deja `informe-instalacion.md`).
+
+### instalar.ps1 y el paquete sin ejecutar en Windows
+_2026-10-29 · limitacion_
+<!-- entrada {"id":115,"seccion":"Windows: fases 4 a 6, paquete e instalador","titulo":"instalar.ps1 y el paquete sin ejecutar en Windows","fecha":"2026-10-29","tipo":"limitacion"} -->
+
+<!-- item {"id":421,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"`instalar.ps1`, `lanzador.pyw` y las tareas solo pasaron un parser, pruebas estáticas y simulaciones en Linux","modulos":["instalador","windows"],"archivos":["instalador/instalar.ps1","instalador/lanzador.pyw"]} -->
+- **Verificado:** sintaxis del `.ps1`, BOM, reglas estáticas, el zip se extrae y `uv sync --frozen --no-dev` + importación + recolector corren en Linux, y el lanzador se prueba en Linux.
+  - **Sin verificar:** todo `instalar.ps1` en un Windows real (tareas con `-RepetitionDuration`, `-LogonType Interactive` sin admin, accesos `.lnk` con `pythonw`), el comportamiento de `--` en `claude mcp add` desde PowerShell 5.1, la rotación y el log con pythonw, que uv instale Python 3.12 y las dependencias con el lock en Windows, `Get-MpComputerStatus`, SmartScreen/Defender ante el zip y el `.ps1`, y el toast con el AUMID.
+
+### Probar el paquete en un Windows real
+_2026-10-29 · nota_
+<!-- entrada {"id":116,"seccion":"Windows: fases 4 a 6, paquete e instalador","titulo":"Probar el paquete en un Windows real","fecha":"2026-10-29","tipo":"nota"} -->
+
+<!-- item {"id":422,"tipo":"pendiente","vigencia":"vigente","fecha":"2026-10-29","resumen":"Pendiente: correr `instalar.ps1` y `PROMPT-VERIFICACION.md` en la PC con Windows y traer `informe-instalacion.md`","modulos":["instalador","windows"]} -->
+- Con el informe se corrigen aquí los problemas (nunca en la PC instalada). La lista concreta de lo no verificado está en la limitación de este grupo y en la fase 3.

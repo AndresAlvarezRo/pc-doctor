@@ -24,7 +24,8 @@ MODULOS: dict[str, list[str]] = {
     "mcp": ["server.py", "tests/test_cuarentena.py"],
     "plataforma": ["plataforma/__init__.py", "plataforma/comun.py", "plataforma/linux.py", "tests/test_plataforma.py"],
     "windows": ["plataforma/windows*.py", "tests/test_windows_*.py"],
-    "instalador": ["instalador/**", "tests/test_instalador.py"],   # habilitar-sensores.ps1 y el ayudante (fase 3); instalar.ps1, empaquetar.py y las plantillas (fases 4 a 6)
+    "instalador": ["instalador/**", "empaquetar.py", "plantillas/**", "config.ejemplo.json", "tests/test_instalador.py", "tests/test_empaquetar.py",
+                   "tests/test_lanzador.py"],   # instalar.ps1, el ayudante, empaquetar.py (el zip de Windows) y sus plantillas
     "infra": ["systemd/**", "habilitar-sensores.sh", "pyproject.toml", "uv.lock"],
     "git": ["scripts/**", ".github/**", ".gitignore", "tests/conftest.py", "tests/ayudas.py", "tests/falsos/**", "tests/test_hook.py"],
     "sistema": [],      # lo que está fuera del repo (servicios de otros proyectos, overrides, sudoers, /etc): se resuelve por la ruta

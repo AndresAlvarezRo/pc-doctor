@@ -360,6 +360,12 @@ def paso(nombre: str, fn, *args):
         return None
 
 
+def exportar_memoria(con) -> dict:
+    """En Windows no hay repo: el changelog y la identidad manual se exportan a la carpeta de datos (CHANGELOG.md), como respaldo legible."""
+    import memoria
+    return memoria.exportar(con, db.DIR_DATOS, archivos=("CHANGELOG.md",))   # la bitácora es del desarrollo: no viaja
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
     con = db.conectar()
@@ -373,6 +379,7 @@ def main() -> int:
         ("salud", salud.ciclo, (con,)),
         ("seguridad", seguridad.revisar_y_guardar, (con,)),
         ("retencion", aplicar_retencion, (con,)),
+        *((("exportar", exportar_memoria, (con,)),) if plataforma.actual().NOMBRE == "windows" else ()),
     ):
         r = paso(nombre, fn, *args)
         con.commit()

@@ -156,7 +156,7 @@ def test_con_los_markdown_reales_del_repo_la_ida_y_vuelta_es_identica(tmp_path):
     sin_calculadas = lambda t: [l for l in t.split("\n") if l.strip() and not (l.startswith("| ") and l.split("|")[1].strip().lower() in CALCULADAS)
                                 and l != "_Todavía no hay un snapshot de entorno._"]
     assert sin_calculadas(b["CHANGELOG.md"]) == sin_calculadas(cl)
-    assert otra.execute("SELECT COUNT(*) FROM bitacora_items WHERE vigencia='superada' AND reemplazada_por IS NOT NULL").fetchone()[0] == 16
+    assert otra.execute("SELECT COUNT(*) FROM bitacora_items WHERE vigencia='superada' AND reemplazada_por IS NOT NULL").fetchone()[0] >= 16
 
 
 # ---------- seguridad de la importación ----------

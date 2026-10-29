@@ -1,0 +1,8 @@
+{
+  "consulta_online": true,
+  "malwarebazaar_key": "",
+  "notificaciones": true,
+  "salud": true,
+  "umbrales": {},
+  "boton_dashboard": true
+}

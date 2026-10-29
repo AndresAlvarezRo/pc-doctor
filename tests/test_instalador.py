@@ -10,6 +10,7 @@ import pytest
 DIR = Path(__file__).resolve().parent.parent / "instalador"
 AYUDANTE = DIR / "ayudante.ps1"
 HABILITAR = DIR / "habilitar-sensores.ps1"
+INSTALAR = DIR / "instalar.ps1"
 VERSIONES = DIR / "versiones.toml"
 
 
@@ -20,7 +21,7 @@ def codigo(ruta: Path) -> str:
 
 # ---------- formato ----------
 
-@pytest.mark.parametrize("ruta", [AYUDANTE, HABILITAR])
+@pytest.mark.parametrize("ruta", [AYUDANTE, HABILITAR, INSTALAR])
 def test_los_scripts_estan_en_utf8_con_marca_de_orden_de_bytes(ruta):
     # sin la marca, Windows PowerShell 5.1 los lee como ANSI y rompe los acentos
     assert ruta.read_bytes()[:3] == b"\xef\xbb\xbf"
@@ -164,8 +165,72 @@ def test_versiones_toml_solo_tiene_secciones_y_claves_con_texto_entre_comillas()
 def test_cada_descarga_fijada_tiene_version_direccion_de_github_y_sha256():
     tomllib = pytest.importorskip("tomllib")
     d = tomllib.loads(VERSIONES.read_text(encoding="utf-8"))
-    assert set(d) == {"librehardwaremonitor", "smartmontools", "pawnio"}
-    for nombre, s in d.items():
+    assert set(d) == {"uv", "python", "librehardwaremonitor", "smartmontools", "pawnio"}
+    assert set(d["python"]) == {"version"}      # lo descarga uv, que verifica su propia integridad
+    for nombre, s in ((n, v) for n, v in d.items() if n != "python"):
         assert set(s) == {"version", "url", "sha256"} and re.fullmatch(r"[0-9a-f]{64}", s["sha256"]), nombre
         assert s["url"].startswith("https://github.com/") and s["version"] in s["url"], nombre
     assert d["librehardwaremonitor"]["sha256"] == "086d9f1b5a99e643edc2cfaaac16051685b551e4c5ac0b32a57c58c0e529c001"   # verificado contra el hash que publica GitHub
+
+
+# ---------- instalar.ps1 ----------
+
+def test_instalar_no_pide_administrador_y_las_tareas_corren_con_privilegios_limitados():
+    c = codigo(INSTALAR)
+    assert "RunLevel Limited" in c and "RunLevel Highest" not in c
+    assert not re.search(r"-Verb\s+RunAs|#requires\s+-RunAsAdministrator", INSTALAR.read_text(encoding="utf-8-sig"), re.I)
+    assert "SYSTEM" not in c and "S-1-5-18" not in c
+
+
+def test_instalar_nunca_ejecuta_el_ayudante_solo_lo_ofrece():
+    c = codigo(INSTALAR)
+    c = c[c.index("Set-StrictMode"):]             # sin el bloque de ayuda del principio
+    assert not re.search(r"(?m)^\s*(&|\.|Start-Process|Invoke-Expression)\b.*(habilitar-sensores|ayudante\.ps1)", c)
+    assert not re.search(r"-ArgumentList.*habilitar", c)
+    assert "habilitar-sensores.ps1" in c           # lo ofrece: imprime el comando con -Simular, que no cambia nada
+    for linea in c.splitlines():
+        if "habilitar-sensores.ps1" in linea:
+            assert linea.strip().startswith("Escribir"), linea
+
+
+def test_instalar_tiene_las_tres_opciones_y_es_idempotente():
+    t = INSTALAR.read_text(encoding="utf-8-sig")
+    param = t[t.index("param("):t.index(")\n\nSet-StrictMode")]
+    assert sorted(re.findall(r"\[switch\]\$(\w+)", param)) == ["Desinstalar", "Simular", "Verificar"]
+    assert t.count("Register-ScheduledTask") == 3 and t.count("-Force | Out-Null") >= 3      # registrar de nuevo reemplaza, no duplica
+    assert "Unblock-File" in t
+
+
+def test_instalar_descarga_solo_con_hash_y_de_github():
+    c = codigo(INSTALAR)
+    assert c.count("Invoke-WebRequest -UseBasicParsing -Uri $url") == 1       # la única descarga está en Descargar
+    assert "StartsWith('https://github.com/')" in c
+    assert c.index("Get-FileHash") < c.index("return") or "throw" in c
+    assert "Expand-Archive" in c and c.index("Descargar $v['uv']['url']") < c.index("Expand-Archive")
+    assert "iex" not in c.lower().split() and "Invoke-Expression" not in c
+
+
+def test_instalar_no_borra_los_datos_ni_pisa_el_claude_md_del_usuario():
+    c = codigo(INSTALAR)
+    for m in re.finditer(r"Remove-Item[^\n]*", c):
+        assert "$Datos" not in m.group() and "web_token" not in m.group(), m.group()
+    assert "WriteAllText($md" not in c and "Set-Content" not in c and "Out-File" not in c
+    assert "AppendAllText($md" in c and "$MarcaClaudeMd" in c             # agrega al final y solo si todavía no está
+
+
+def test_instalar_usa_el_entorno_exacto_del_lock_y_sin_dependencias_de_desarrollo():
+    assert "sync --frozen --no-dev" in codigo(INSTALAR)
+
+
+def test_las_tareas_de_instalar_coinciden_con_los_nombres_que_usa_el_codigo():
+    from plataforma import windows_notificaciones as wn
+    c = codigo(INSTALAR)
+    assert "$TareaWeb = 'pc-doctor-web'" in c and "pc-doctor-web" in wn.SCRIPT_ARRANCAR
+    assert "dashboard.py abrir" in c                                      # el acceso directo hace lo mismo que `dashboard.py abrir`
+    assert "--host 127.0.0.1" in c                                         # el dashboard escucha solo en local
+    assert "0.0.0.0" not in c
+
+
+def test_los_archivos_que_nombra_instalar_existen_en_el_repo():
+    for nombre in ("lanzador.pyw", "verificar.py", "versiones.toml", "PROMPT-VERIFICACION.md", "INSTALAR-WINDOWS.md"):
+        assert (DIR / nombre).is_file(), nombre

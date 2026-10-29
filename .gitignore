@@ -20,3 +20,6 @@ web/capturas/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Paquete de instalación generado por empaquetar.py
+paquetes/

@@ -28,6 +28,7 @@ import alertas
 import consultas
 import memoria
 import db
+import plataforma
 import reputacion
 from db import log
 
@@ -130,15 +131,21 @@ def leer(con, fecha: str) -> dict | None:
 
 def ruta_claude(cfg: dict) -> str | None:
     """Ruta absoluta de claude (systemd no hereda el PATH del usuario); None si no existe."""
-    for c in (cfg.get("claude"), str(Path.home() / ".local" / "bin" / "claude"), shutil.which("claude")):
+    for c in (cfg.get("claude"), str(Path.home() / ".local" / "bin" / "claude"), str(Path.home() / ".local" / "bin" / "claude.exe"), shutil.which("claude")):
         if c and Path(c).is_file() and os.access(c, os.X_OK):
             return c
     return None
 
 
+def ruta_uv() -> str:
+    """uv del PATH; si no, el de ~/.local/bin; en Windows, también el que deja instalar.ps1 junto al programa."""
+    propio = Path(__file__).resolve().parent / "herramientas" / "uv.exe"
+    return shutil.which("uv") or (str(propio) if propio.is_file() else str(Path.home() / ".local" / "bin" / "uv"))
+
+
 def config_mcp() -> str:
     """JSON con SOLO el servidor de pc-doctor (el resto de los MCP de la cuenta, como web o Drive, no se cargan)."""
-    uv = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
+    uv = ruta_uv()
     srv = {"command": uv, "args": ["run", "--directory", str(Path(__file__).resolve().parent), "server.py"]}
     if os.environ.get("PC_DOCTOR_DATOS"):
         srv["env"] = {"PC_DOCTOR_DATOS": os.environ["PC_DOCTOR_DATOS"]}
@@ -172,6 +179,20 @@ def clasificar_error(codigo: int, texto: str) -> str:
     return f"error de claude (código {codigo}): {' '.join(texto.split())[:150]}"
 
 
+def _grupo_de_procesos() -> dict:
+    """Argumentos de Popen para que claude y el servidor MCP que lanza formen un grupo que se pueda matar junto."""
+    if plataforma.actual().NOMBRE == "windows":
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200) | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    return {"start_new_session": True}
+
+
+def _matar_arbol(p: subprocess.Popen) -> None:
+    if plataforma.actual().NOMBRE == "windows":
+        subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True, timeout=30)
+    else:
+        os.killpg(p.pid, signal.SIGKILL)
+
+
 def pedir_a_claude(cfg: dict) -> tuple[str | None, str | None, float]:
     """(texto, motivo_del_fallo, segundos). Si texto es None, `motivo` explica por qué hay que usar el plan B."""
     claude = ruta_claude(cfg)
@@ -179,19 +200,20 @@ def pedir_a_claude(cfg: dict) -> tuple[str | None, str | None, float]:
         return None, "no encontré el ejecutable de claude", 0.0
     entorno = dict(os.environ)
     entorno.update({"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"})  # sin CLAUDE.md ni memoria
-    entorno["PATH"] = f"{Path.home() / '.local' / 'bin'}:{entorno.get('PATH', '/usr/bin:/bin')}"
+    base = "" if plataforma.actual().NOMBRE == "windows" else "/usr/bin:/bin"
+    entorno["PATH"] = f"{Path.home() / '.local' / 'bin'}{os.pathsep}{entorno.get('PATH', base)}"
     cwd = db.DIR_DATOS / "reportes"
     cwd.mkdir(parents=True, exist_ok=True)  # carpeta neutra: sin CLAUDE.md del proyecto
     t0 = time.time()
     try:
         p = subprocess.Popen(construir_comando(claude, cfg), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             text=True, cwd=cwd, env=entorno, start_new_session=True)
+                             text=True, cwd=cwd, env=entorno, **_grupo_de_procesos())
     except OSError as e:
         return None, f"no pude ejecutar claude: {e}", 0.0
     try:
         salida, err = p.communicate(PROMPT.format(fecha=datetime.now().strftime("%Y-%m-%d")), timeout=cfg["timeout_s"])
     except subprocess.TimeoutExpired:
-        os.killpg(p.pid, signal.SIGKILL)  # mata también al servidor MCP que lanzó claude
+        _matar_arbol(p)  # mata también al servidor MCP que lanzó claude
         p.communicate()
         return None, f"tiempo agotado ({cfg['timeout_s']} s)", time.time() - t0
     seg = time.time() - t0
@@ -358,7 +380,7 @@ def guardar(con, md: str, modo: str, motivo: str | None, seg: float, resumen: st
         cabecera = f"_**Reporte determinístico, sin redactar**: Claude no estuvo disponible ({motivo}). Mismos datos, solo ordenados._"
     tmp = ruta.with_suffix(".md.tmp")
     tmp.write_text(f"# Reporte semanal de pc-doctor, {base}\n\n{cabecera}\n\n{md}\n")
-    tmp.rename(ruta)
+    os.replace(tmp, ruta)
     con.execute("INSERT INTO reportes (ts, ruta, modo, motivo, duracion_s, resumen) VALUES (?,?,?,?,?,?)",
                 (db.ahora(), str(ruta), modo, motivo, round(seg, 1), resumen))
     con.commit()

@@ -1,6 +1,17 @@
-# Versiones y hashes de lo que habilitar-sensores.ps1 descarga. El script no baja nada que no esté acá: verifica el SHA-256 antes de
+# Versiones y hashes de lo que instalar.ps1 y habilitar-sensores.ps1 descargan. Los scripts no bajan nada que no esté acá: verifica el SHA-256 antes de
 # extraer o ejecutar y se detiene si no coincide. Solo se aceptan direcciones https://github.com/.
 # Para actualizar una versión: cambiar version, url y sha256 a la vez, verificando el hash contra la página oficial del proyecto.
+
+[uv]
+# Lo instala instalar.ps1 si falta uv. Zip oficial de Astral para Windows de 64 bits; el SHA-256 coincide con el .sha256 que publica GitHub
+# y con el que calculamos al descargarlo (verificado el 2026-10-29).
+version = "0.13.6"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-pc-windows-msvc.zip"
+sha256 = "a2a8820d5eea32f08ef467ef3b7f66883a9b076d5737a2fc2fbb5f458d1bb50f"
+
+[python]
+# Lo descarga uv (python-build-standalone, con su propia verificación de integridad): acá solo se fija la versión.
+version = "3.12"
 
 [librehardwaremonitor]
 # Build para .NET Framework (viene con Windows 10/11, no instala nada más). Verificado el 2026-10-29: el SHA-256 coincide con el que publica GitHub.

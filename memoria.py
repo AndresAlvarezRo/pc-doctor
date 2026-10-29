@@ -885,11 +885,12 @@ def exportar_changelog(con) -> str:
     return "\n".join(out) + "\n"
 
 
-def exportar(con, destino: Path = RAIZ) -> dict:
-    """Escribe BITACORA.md y CHANGELOG.md en `destino`. No escribe lo que no tiene tabla todavía; devuelve cuántas entradas exportó."""
+def exportar(con, destino: Path = RAIZ, archivos: tuple[str, ...] | None = None) -> dict:
+    """Escribe BITACORA.md y CHANGELOG.md en `destino` (o solo los de `archivos`). No escribe lo que no tiene tabla todavía; devuelve
+    cuántas entradas exportó."""
     res = {}
     for tabla, archivo, funcion in (("bitacora", "BITACORA.md", exportar_bitacora), ("changelog", "CHANGELOG.md", exportar_changelog)):
-        if not existe(con, tabla):
+        if not existe(con, tabla) or (archivos is not None and archivo not in archivos):
             continue
         texto = funcion(con)
         destino.mkdir(parents=True, exist_ok=True)
