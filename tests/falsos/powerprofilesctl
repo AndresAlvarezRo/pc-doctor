@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+# Reemplazo de powerprofilesctl: el perfil actual es el último `set` del registro (o FAKE_PERFIL, por defecto balanced).
+import json, os, sys
+a = sys.argv[1:]
+reg = os.environ["FAKE_LOG"]
+perfil = os.environ.get("FAKE_PERFIL", "balanced")
+for linea in open(reg):
+    r = json.loads(linea)
+    if r.get("cmd") == "powerprofilesctl" and r["argv"][:1] == ["set"]:
+        perfil = r["argv"][1]
+open(reg, "a").write(json.dumps({"cmd": "powerprofilesctl", "argv": a}) + "\n")
+if a == ["get"]:
+    print(perfil)
+elif a[:1] == ["set"] and os.environ.get("FAKE_PERFIL_FALLA"):
+    sys.stderr.write("perfil no disponible\n"); sys.exit(1)

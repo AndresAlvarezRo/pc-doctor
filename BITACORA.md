@@ -1597,3 +1597,34 @@ _2026-10-29 · nota_
 
 <!-- item {"id":422,"tipo":"pendiente","vigencia":"vigente","fecha":"2026-10-29","resumen":"Pendiente: correr `instalar.ps1` y `PROMPT-VERIFICACION.md` en la PC con Windows y traer `informe-instalacion.md`","modulos":["instalador","windows"]} -->
 - Con el informe se corrigen aquí los problemas (nunca en la PC instalada). La lista concreta de lo no verificado está en la limitación de este grupo y en la fase 3.
+
+## Remediación asistida: Fase 1 (catálogo y ejecutor)
+
+### Decisiones
+_2026-10-29 · decision_
+<!-- entrada {"id":117,"seccion":"Remediación asistida: Fase 1 (catálogo y ejecutor)","titulo":"Decisiones","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":423,"tipo":"invariante","vigencia":"vigente","fecha":"2026-10-29","resumen":"Remediación: solo acciones del catálogo cerrado de remediacion.py; lo demás se rechaza y el rechazo se registra","modulos":["remediacion"],"archivos":["remediacion.py","tests/test_remediacion.py"],"prueba":"tests/test_remediacion.py::test_entradas_maliciosas_se_rechazan_y_quedan_registradas"} -->
+- El modelo propone, nunca ejecuta: `remediacion.aplicar(nombre, parametros, simular=True)` valida contra `CATALOGO` (nombre exacto, sin parámetros de más ni de menos, enteros estrictos sin bool/str/float, texto ASCII con patrón, opciones cerradas).
+  - Rechazos (también en simulación) quedan en `ejecuciones` (estado `rechazada`) y en `acciones` (`remediacion:<nombre>`).
+  - Por defecto se simula; ejecutar es explícito. Sin `shell=True`, sin `sudo`, sin borrar ni `SIGKILL` (una prueba lo vigila por el código fuente).
+  - `cerrar_proceso`: SIGTERM, espera 5 s y no fuerza; solo uid propio, nombre idéntico al esperado; protege ancestros de pc-doctor, pid 1, sesión gráfica, servicios de la sesión, `claude` y cualquier línea de comandos con `pc-doctor`; nunca preaprobable.
+  - Preaprobables: solo las tres cachés. `reiniciar_servicio_usuario` lee `config.json -> remediacion -> servicios_permitidos` (vacía por defecto; no se escribe nada en config.json en esta fase).
+  **(invariante · prueba: tests/test_remediacion.py::test_entradas_maliciosas_se_rechazan_y_quedan_registradas)**
+  <!-- item {"id":424,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"La lógica de limpiar_descargas_viejas y restaurar_cuarentena pasó a remediacion.py; la tool del MCP delega","modulos":["mcp","remediacion"],"archivos":["db.py","remediacion.py","server.py","tests/test_cuarentena.py"]} -->
+- Para que el catálogo y la tool compartan una sola implementación, `server.limpiar_descargas_viejas` y `restaurar_cuarentena` son envoltorios de `remediacion.limpiar_descargas` y `remediacion.restaurar_cuarentena`. Misma respuesta que antes.
+  - `restaurar_cuarentena` ahora también restaura carpetas (las cachés se mueven por elemento de primer nivel). `tests/test_cuarentena.py` adelanta el reloj de `remediacion`, no de `server`.
+  - Tabla nueva `ejecuciones` en `db.ESQUEMA` (plan_id, accion, parametros, estado aplicada/fallida/rechazada, resultado, deshacer, deshecha_en). Las acciones llevan `plataformas=("linux",)`; en Windows se rechazan hasta portarlas.
+  - Cada acción declara `verificar(parametros, resultado)` (efecto esperado) para la fase 3, y `deshacer` si es reversible; un deshacer parcial no marca la ejecución como deshecha.
+
+### Limitaciones
+_2026-10-29 · limitacion_
+<!-- entrada {"id":118,"seccion":"Remediación asistida: Fase 1 (catálogo y ejecutor)","titulo":"Limitaciones","fecha":"2026-10-29","tipo":"limitacion"} -->
+
+<!-- item {"id":425,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"Mover a cuarentena no libera espacio (mismo disco): una alerta de disco no se resuelve con las limpiezas","modulos":["remediacion","salud"],"archivos":["remediacion.py"]} -->
+- Las limpiezas (cachés y Descargas) mueven a `datos/cuarentena/`, que está en el mismo disco: el espacio libre no sube hasta purgar la cuarentena, y no existe ninguna purga (nada se borra).
+  - Para la fase 3, la verificación de una alerta de espacio en disco va a fallar aunque la acción "funcione"; la verificación del efecto de la acción (la caché pesa menos) sí cumple.
+  - El deshacer de una caché no pisa lo regenerado en el mismo lugar: queda parcial y reintentable.
+  - `UV_CACHE_DIR`/`PIP_CACHE_DIR` no se respetan; solo `~/.cache` o `XDG_CACHE_HOME` dentro del HOME.
+  - Un `uv`/`pip` ajeno en marcha bloquea la limpieza de su caché (los ancestros de pc-doctor se ignoran porque el recolector corre bajo `uv run`).
+  - Cualquier proceso cuya línea de comandos contenga `pc-doctor` queda protegido, incluso de otro programa.

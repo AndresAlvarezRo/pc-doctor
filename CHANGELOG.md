@@ -10,14 +10,14 @@ Historial de diagnósticos, errores, soluciones y cambios del equipo, de la entr
 |---|---|
 | Hostname | v-System-Product-Name |
 | SO | Zorin OS 18.1, escritorio zorin:GNOME |
-| Kernel | 7.0.0-38-generic |
+| Kernel | 7.0.0-42-generic |
 | CPU | AMD Ryzen 5 5600X (6 núcleos, 12 hilos, x86_64) |
 | GPU | Navi 33 [Radeon RX 7700S/7600/7600S/7600M XT/PRO W7600] [1002:7480], driver `amdgpu`, Mesa 26.2.5 |
 | RAM | 31,2 GB (sin swap) |
 | Discos | KINGSTON SA400S37480G 447,1G (sda); Patriot Burst Elite 240GB 223,6G (sdb); CT1000P310SSD8 931,5G (nvme0n1) |
 | Placa madre | ASUSTeK COMPUTER INC. PRIME B550-PLUS, BIOS 3404 |
-| Paquetes | 2450 (apt 2391, flatpak 50, snap 9) |
-| _Snapshot_ | 2026-10-28 20:04 |
+| Paquetes | 2456 (apt 2397, flatpak 50, snap 9) |
+| _Snapshot_ | 2026-10-29 12:17 |
 | Energía | Perfil `balanced` (governor `powersave` + EPP `balance_performance`, driver `amd-pstate-epp`); antes `performance` |
 | Red expuesta | Solo Steam `27036` y el DNS de libvirt `192.168.122.1:53` accesibles desde la LAN. `ttyd` (`centro-hogar-ttyd`) en `127.0.0.1:7681`; `fluidsynth` aislado en red privada. IP LAN 192.168.0.9 |
 | Sensores extra | `smartmontools`, módulos `drivetemp` (sda, sdb) y `nct6775` (chip `nct6798`: voltajes, ventiladores fan2/fan7 conectados) activos, permanentes vía `/etc/modules-load.d/pc-doctor.conf`; permiso SMART en `/etc/sudoers.d/pc-doctor` |

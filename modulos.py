@@ -16,6 +16,7 @@ MODULOS: dict[str, list[str]] = {
     "actividad": ["actividad.py", "tests/test_actividad.py"],
     "correlacion": ["correlacion.py", "tests/test_correlacion.py"],
     "reporte": ["reporte.py", "tests/test_reporte.py"],
+    "remediacion": ["remediacion.py", "tests/test_remediacion.py"],
     "alertas": ["alertas.py", "tests/test_notificaciones.py"],
     "dashboard": ["web/**", "dashboard.py", "tests/test_api.py", "tests/test_api_vs_mcp.py", "tests/test_dashboard.py"],
     "memoria": ["memoria.py", "migrar_memoria.py", "modulos.py", "tests/test_*memoria*.py", "tests/test_hechos_efecto.py",

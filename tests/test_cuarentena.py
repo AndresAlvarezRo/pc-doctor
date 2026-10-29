@@ -3,7 +3,7 @@
 Todo ocurre en un HOME temporal (conftest.py): ~/Descargas es una carpeta de la prueba y nada toca archivos reales.
 
 La edad de un archivo es el máximo entre mtime y ctime, y el ctime no se puede falsear (es el momento del último cambio de
-metadatos). Por eso, para volver "viejos" a archivos recién creados se adelanta el reloj que usa solo el módulo del servidor."""
+metadatos). Por eso, para volver "viejos" a archivos recién creados se adelanta el reloj que usa solo remediacion.py."""
 
 import hashlib
 import os
@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 import db
+import remediacion
 import server
 
 HASTA_AHORA = time.time
@@ -28,9 +29,9 @@ def descargas():
 
 @pytest.fixture
 def adelantar_reloj(monkeypatch):
-    """Hace que `limpiar_descargas_viejas` crea que pasaron `dias` días (el resto del programa conserva el reloj real)."""
+    """Hace que `limpiar_descargas_viejas` (que vive en remediacion.py) crea que pasaron `dias` días (el resto del programa conserva el reloj real)."""
     def poner(dias):
-        monkeypatch.setattr(server, "time", SimpleNamespace(time=lambda: HASTA_AHORA() + dias * 86400))
+        monkeypatch.setattr(remediacion, "time", SimpleNamespace(time=lambda: HASTA_AHORA() + dias * 86400))
     return poner
 
 

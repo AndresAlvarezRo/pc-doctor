@@ -79,6 +79,18 @@ CREATE TABLE IF NOT EXISTS acciones (
     resultado TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_acciones_ts ON acciones(ts);
+CREATE TABLE IF NOT EXISTS ejecuciones (
+    id INTEGER PRIMARY KEY,
+    ts INTEGER NOT NULL,
+    plan_id INTEGER,           -- el plan que la pidió (NULL si fue a mano)
+    accion TEXT NOT NULL,      -- nombre del catálogo de remediacion.py (o lo que se intentó, si fue rechazada)
+    parametros TEXT,           -- JSON
+    estado TEXT NOT NULL CHECK (estado IN ('aplicada','fallida','rechazada')),
+    resultado TEXT,            -- JSON
+    deshacer TEXT,             -- JSON con lo necesario para deshacerla; NULL si no es reversible
+    deshecha_en INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_ejecuciones_ts ON ejecuciones(ts);
 CREATE TABLE IF NOT EXISTS cuarentena (
     id INTEGER PRIMARY KEY,
     ruta_original TEXT NOT NULL,

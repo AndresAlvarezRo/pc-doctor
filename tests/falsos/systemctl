@@ -5,6 +5,8 @@ open(os.environ["FAKE_LOG"], "a").write(json.dumps({"cmd": "systemctl", "argv": 
 if "list-units" in a:
     for n in range(int(os.environ.get("FAKE_ESCUCHAS", "0"))): print(f"pc-doctor-notif-{n}.service loaded active running x")
     sys.exit(0)
+if "is-active" in a:
+    print(os.environ.get("FAKE_ACTIVO", "active")); sys.exit(0 if os.environ.get("FAKE_ACTIVO", "active") == "active" else 3)
 if "start" in a:
     if os.environ.get("FAKE_SERVICIO") == "ausente":
         sys.stderr.write("Failed to start pc-doctor-web.service: Unit pc-doctor-web.service not found.\n"); sys.exit(5)

@@ -18,6 +18,7 @@ import db
 import memoria
 import plataforma
 import linea_base
+import remediacion
 import reputacion
 import salud
 import seguridad
@@ -260,67 +261,7 @@ def limpiar_descargas_viejas(dias: int = 90, simular: bool = True) -> dict:
     """
     if dias < 1:
         return {"error": "`dias` debe ser al menos 1."}
-    raiz = db.carpeta_descargas()
-    if raiz is None:
-        return {"error": "No existe ~/Descargas ni ~/Downloads."}
-    raiz_real = raiz.resolve()
-    corte = time.time() - dias * 86400
-
-    candidatos = []
-    for dirpath, _, nombres in os.walk(raiz_real, followlinks=False):
-        for nombre in nombres:
-            p = Path(dirpath) / nombre
-            try:
-                if p.is_symlink() or not p.is_file():
-                    continue
-                st = p.stat()
-                if plataforma.actual().fecha_archivo(st) < corte and p.resolve().is_relative_to(raiz_real):
-                    candidatos.append((p, st.st_size))
-            except OSError:
-                continue
-    candidatos.sort(key=lambda c: c[1], reverse=True)
-    total_mb = round(sum(s for _, s in candidatos) / 1048576, 1)
-    # Resumen por elemento de primer nivel (carpeta o archivo suelto) para mantener la respuesta compacta
-    grupos: dict[str, list[float]] = {}
-    for p, tam in candidatos:
-        g = grupos.setdefault(p.relative_to(raiz_real).parts[0], [0, 0.0])
-        g[0] += 1
-        g[1] += tam / 1048576
-    muestra = [{"elemento": k, "archivos": v[0], "mb": round(v[1], 1)}
-               for k, v in sorted(grupos.items(), key=lambda kv: kv[1][1], reverse=True)[:MAX_LISTA]]
-
-    if simular:
-        return {"modo": "simulación", "carpeta": str(raiz_real), "archivos": len(candidatos),
-                "total_mb": total_mb, "elementos": len(grupos), "por_elemento": muestra,
-                "nota": "No se movió nada. Llamá con simular=False para mover a cuarentena."}
-
-    destino_base = db.DIR_CUARENTENA / datetime.now().strftime("%Y-%m-%d")
-    con = db.conectar()
-    movidos, errores = 0, []
-    try:
-        for p, tam in candidatos:
-            rel = p.relative_to(raiz_real)
-            destino = destino_base / rel
-            n = 1
-            while destino.exists():  # evita pisar archivos de una corrida previa del mismo día
-                destino = destino_base / rel.parent / f"{rel.stem}.{n}{rel.suffix}"
-                n += 1
-            try:
-                destino.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(p), str(destino))
-            except OSError as e:
-                errores.append(f"{rel}: {e}")
-                continue
-            con.execute(
-                "INSERT INTO cuarentena (ruta_original, ruta_nueva, tamano_bytes, movido_en) VALUES (?,?,?,?)",
-                (str(p), str(destino), tam, db.ahora()))
-            _registrar_accion(con, "limpiar_descargas_viejas", {"archivo": str(p), "dias": dias},
-                              f"movido a {destino}")
-            movidos += 1
-    finally:
-        con.close()
-    return {"modo": "ejecución", "movidos": movidos, "total_mb": total_mb, "cuarentena": str(destino_base),
-            "errores": errores[:5], "restaurar": "usá restaurar_cuarentena(id)"}
+    return remediacion.limpiar_descargas(dias, simular)
 
 
 @mcp.tool()
@@ -328,24 +269,10 @@ def restaurar_cuarentena(id: int) -> dict:
     """Devuelve a su ruta original el archivo de cuarentena con ese `id`. No pisa archivos existentes."""
     con = db.conectar()
     try:
-        r = con.execute("SELECT * FROM cuarentena WHERE id=?", (id,)).fetchone()
-        if not r:
-            return {"error": f"No existe el registro de cuarentena {id}."}
-        if r["restaurado"]:
-            return {"error": "Ese archivo ya fue restaurado."}
-        origen, destino = Path(r["ruta_nueva"]), Path(r["ruta_original"])
-        if not origen.is_file():
-            return {"error": f"El archivo en cuarentena no existe: {origen}"}
-        if destino.exists():
-            return {"error": f"Ya existe un archivo en la ruta original, no lo piso: {destino}"}
-        try:
-            destino.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(origen), str(destino))
-        except OSError as e:
-            return {"error": f"No se pudo restaurar: {e}"}
-        con.execute("UPDATE cuarentena SET restaurado=1 WHERE id=?", (id,))
-        _registrar_accion(con, "restaurar_cuarentena", {"id": id}, f"restaurado en {destino}")
-        return {"restaurado": str(destino)}
+        r = remediacion.restaurar_cuarentena(con, id)
+        if "restaurado" in r:
+            _registrar_accion(con, "restaurar_cuarentena", {"id": id}, f"restaurado en {r['restaurado']}")
+        return r
     finally:
         con.close()
 
