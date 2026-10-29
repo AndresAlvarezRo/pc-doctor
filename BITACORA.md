@@ -1281,3 +1281,70 @@ _2026-10-28 · prueba_
 - Suite completa con la identidad manual: ver el commit de cierre. Pruebas nuevas: crear, actualizar y rechazar campos calculados, orden y nota en la tabla exportada, identidad manual sin snapshot, tool del MCP, `|` y saltos de línea, y que `memoria` y `hechos_conocidos` siguen sin salir de la base mientras `identidad_manual` sí.
   <!-- item {"id":377,"tipo":"prueba","vigencia":"vigente","fecha":"2026-10-28","resumen":"Resultado de la migración completa: 76 entradas de bitácora (más las de la Fase 3 y 4 registradas después), 21 del…","modulos":["memoria"]} -->
 - Resultado de la migración completa: 76 entradas de bitácora (más las de la Fase 3 y 4 registradas después), 21 del changelog (13 resueltas, 8 abiertas), 2 recuerdos y 4 filas de identidad.
+
+## Nivel nuevo 7: bitácora en ítems por módulo (pedido del usuario, en fases)
+
+### Decisiones
+_2026-10-29 · decision_
+<!-- entrada {"id":84,"seccion":"Nivel nuevo 7: bitácora en ítems por módulo (pedido del usuario, en fases)","titulo":"Decisiones","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":379,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"El ítem es la unidad de la bitácora; `bitacora` queda como agrupación (sección y título)","modulos":["memoria"],"archivos":["memoria.py"]} -->
+- **El ítem es la unidad:** un bullet de primer nivel con sus subbullets, o un párrafo. Tiene tipo (incluye `invariante` y `pendiente`), vigencia (`vigente`, `superada`, `historica`), módulos, archivos, resumen de una línea (máximo 120 caracteres) y, si lo protege un test, su nombre. `bitacora` solo agrupa por sección y título.
+  <!-- item {"id":380,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"`modulos.py` mapea archivos a módulos y una prueba falla si un archivo de código queda sin módulo","modulos":["memoria"],"archivos":["modulos.py"],"prueba":"tests/test_bitacora_items.py::test_todo_archivo_versionado_de_codigo_cae_en_algun_modulo"} -->
+- **Mapa de archivos a módulos en el código, no en la base:** `modulos.py` (`MODULOS`, `modulos_de`). Lo de fuera del repo es el módulo `sistema`. Una prueba exige que todo archivo versionado de código caiga en algún módulo y otra que cada patrón coincida con algún archivo.
+  <!-- item {"id":381,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"`contexto` devuelve resúmenes y siempre incluye las invariantes vigentes, aunque se pase de `n`","modulos":["mcp","memoria"],"archivos":["memoria.py","server.py"],"prueba":"tests/test_bitacora_items.py::test_las_invariantes_se_incluyen_siempre_aunque_se_pase_de_n"} -->
+- **`contexto(archivo, modulo, tipo, incluir_superadas, n)`:** solo resúmenes (id, tipo, módulos, resumen), vigentes por defecto. Orden: invariantes, pendientes, limitaciones, decisiones, errores, pruebas, notas. Las invariantes vigentes entran siempre; el resto llena hasta `n` y se informa cuántos quedaron afuera (`omitidos`). Con `tipo="invariante"` no hay tope.
+  <!-- item {"id":382,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Las tools de la bitácora quedan prohibidas por nombre en el `claude -p` del reporte","modulos":["mcp","reporte"],"archivos":["reporte.py"],"prueba":"tests/test_bitacora_items.py::test_las_tools_nuevas_estan_registradas_y_el_reporte_semanal_no_las_usa"} -->
+- **La bitácora es del proyecto, no de la PC:** `buscar_bitacora`, `contexto`, `detalle_bitacora`, `pendientes`, `marcar_superada` y `registrar_bitacora` están en `HERRAMIENTAS_PROHIBIDAS` y fuera de las de lectura.
+  <!-- item {"id":383,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"`marcar_superada` exige un reemplazo vigente y un motivo, no borra nada y deja constancia en `acciones`","modulos":["memoria"],"archivos":["memoria.py"],"prueba":"tests/test_bitacora_items.py::test_marcar_superada_rechaza_lo_incoherente"} -->
+- **Reemplazo explícito:** un ítem solo se marca superado por otro ítem vigente, con motivo. El ítem queda como historia (se exporta con la marca `(superada por #N: motivo)`). Una invariante solo se reemplaza si el usuario lo pidió (está en el docstring, no lo impone el código).
+  <!-- item {"id":384,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"`buscar_bitacora` cae a la búsqueda por sección mientras la base no tenga ítems","modulos":["memoria"],"archivos":["memoria.py"],"prueba":"tests/test_memoria.py::test_sin_items_la_busqueda_cae_a_las_secciones_de_antes"} -->
+- **Transición sin cegar la búsqueda:** si `bitacora_items` no existe o está vacía, `buscar_bitacora` busca sobre las secciones como antes. El exportador también usa el `contenido` de las entradas que no tienen ítems.
+
+### Exportación y respaldo
+_2026-10-29 · decision_
+<!-- entrada {"id":85,"seccion":"Nivel nuevo 7: bitácora en ítems por módulo (pedido del usuario, en fases)","titulo":"Exportación y respaldo","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":385,"tipo":"invariante","vigencia":"vigente","fecha":"2026-10-29","resumen":"El `BITACORA.md` exportado conserva cada línea del anterior, en el mismo orden; las marcas son líneas nuevas","modulos":["memoria"],"archivos":["memoria.py"],"prueba":"tests/test_bitacora_items.py::test_las_marcas_son_lineas_nuevas_y_no_pierden_ni_reordenan_ninguna_linea_del_original"} -->
+- **Nada se pierde ni se reordena al exportar:** las marcas `**(invariante)**` (con la prueba) y `(superada por #N: motivo)` van en líneas aparte después del ítem, sangradas si el ítem es una viñeta. El texto del ítem no se toca.
+  **(invariante · prueba: tests/test_bitacora_items.py::test_las_marcas_son_lineas_nuevas_y_no_pierden_ni_reordenan_ninguna_linea_del_original)**
+  <!-- item {"id":386,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Los metadatos van en comentarios HTML de una línea con JSON, con `\u002d\u002d`, `\u003c` y `\u003e` escapados","modulos":["memoria"],"archivos":["memoria.py"],"prueba":"tests/test_importar_memoria.py::test_cada_comentario_de_metadatos_es_una_linea_html_valida_que_no_se_puede_cerrar_antes"} -->
+- **Respaldo completo:** cada entrada, ítem, entrada del changelog y fila de `identidad_manual` lleva `<!-- clave {json} -->`. GitHub no los muestra. Dentro de una viñeta el comentario va sangrado para que la lista siga siendo una. `registrar_bitacora` rechaza líneas con `#` o con forma de comentario fuera de un bloque de código.
+  <!-- item {"id":387,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"`memoria.py \u002d\u002dimportar` se niega sobre tablas con datos; `\u002d\u002dreemplazar` hace antes una copia de la base","modulos":["memoria"],"archivos":["memoria.py"],"prueba":"tests/test_importar_memoria.py::test_no_pisa_tablas_con_datos"} -->
+- **Importar:** reconstruye `bitacora`, `bitacora_items` (con módulos y archivos), `changelog` e `identidad_manual` con los mismos ids de ítems y de entradas, en una sola transacción. Con `--reemplazar` vacía esas tablas después de `VACUUM INTO doctor.db.antes-de-importar-*`. `memoria` y `hechos_conocidos` no se exportan ni se importan.
+
+### Migración de la bitácora real
+_2026-10-29 · decision_
+<!-- entrada {"id":86,"seccion":"Nivel nuevo 7: bitácora en ítems por módulo (pedido del usuario, en fases)","titulo":"Migración de la bitácora real","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":388,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"La migración a ítems valida que los ítems de cada entrada, unidos, den su texto exacto; el id es el `n`","modulos":["memoria"],"archivos":["migrar_memoria.py"],"prueba":"tests/test_bitacora_items.py::test_una_propuesta_invalida_no_escribe_nada"} -->
+- **`migrar_memoria.py --items PROPUESTA.json [--ejecutar]`:** simula por defecto, exige `doctor.db.antes-de-items-*`, se niega si ya hay ítems y escribe en una sola transacción con los ids iguales al número de la propuesta. Resultado en esta PC: 378 ítems (15 invariantes, 16 superadas, 16 históricas, 7 pendientes).
+
+### Errores encontrados
+_2026-10-29 · error_
+<!-- entrada {"id":87,"seccion":"Nivel nuevo 7: bitácora en ítems por módulo (pedido del usuario, en fases)","titulo":"Errores encontrados","fecha":"2026-10-29","tipo":"error"} -->
+
+<!-- item {"id":389,"tipo":"error","vigencia":"vigente","fecha":"2026-10-29","resumen":"Dos sesiones de pytest a la vez comparten el puerto 8795 y rompen `test_notificaciones`","modulos":["git"],"archivos":["tests/conftest.py"]} -->
+- **Nunca correr dos pytest en paralelo:** el agente de una bifurcación y la sesión principal corrieron la suite a la vez y fallaron 4 a 7 pruebas de `test_notificaciones` sin que el código tuviera la culpa. Pasa limpia al correrla sola.
+  <!-- item {"id":390,"tipo":"error","vigencia":"vigente","fecha":"2026-10-29","resumen":"Una prueba de ida y vuelta con ids consecutivos no detecta que el import ignore el id","modulos":["memoria"],"archivos":["tests/test_importar_memoria.py"],"prueba":"tests/test_importar_memoria.py::test_la_importacion_restaura_las_tablas_con_los_mismos_ids_y_valores"} -->
+- **Mutación que sobrevivía:** hacer que `--importar` ignorara el id del ítem pasaba las pruebas sintéticas, porque los ids eran 1..N. Se agregaron huecos de ids (en ítems y en entradas). SQLite reutiliza el id más alto al borrar el último, así que el hueco se crea borrando uno del medio.
+
+### Limitaciones
+_2026-10-29 · limitacion_
+<!-- entrada {"id":88,"seccion":"Nivel nuevo 7: bitácora en ítems por módulo (pedido del usuario, en fases)","titulo":"Limitaciones","fecha":"2026-10-29","tipo":"limitacion"} -->
+
+<!-- item {"id":391,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"Tipos, módulos y resúmenes de los ítems migrados salieron de reglas automáticas: hay etiquetas imperfectas","modulos":["memoria"],"archivos":["migrar_memoria.py"]} -->
+- **Etiquetas aproximadas:** de los 378 ítems migrados, el usuario revisó solo invariantes, superadas, pendientes y los conteos. El resto (tipo, módulos, archivos, resumen) salió de reglas automáticas con unas 60 correcciones a mano. Si una etiqueta estorba, se corrige con una nueva entrada y `marcar_superada`.
+  <!-- item {"id":392,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"La parte calculada de \"Identidad actual\" no está en el markdown: tras importar reaparece con el próximo snapshot","modulos":["memoria"],"archivos":["memoria.py"],"prueba":"tests/test_importar_memoria.py::test_con_los_markdown_reales_del_repo_la_ida_y_vuelta_es_identica"} -->
+- **El respaldo no incluye el snapshot de entorno:** la ida y vuelta es idéntica byte a byte, salvo las filas calculadas de la identidad (hostname, SO, kernel, CPU, GPU, RAM, discos, placa, paquetes). Las filas declaradas a mano sí vuelven.
+  <!-- item {"id":393,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"`contexto` sobre un módulo grande (salud tiene 72 ítems) muestra pocos: hay que filtrar por `tipo`","modulos":["memoria"],"archivos":["memoria.py"]} -->
+- **Los módulos grandes no caben en `n`:** `contexto(archivo="salud.py")` con `n=12` muestra las invariantes, el pendiente y las limitaciones, y avisa cuántos omite. Las decisiones se piden con `tipo="decision"`.
+
+### Pruebas y medición
+_2026-10-29 · prueba_
+<!-- entrada {"id":89,"seccion":"Nivel nuevo 7: bitácora en ítems por módulo (pedido del usuario, en fases)","titulo":"Pruebas y medición","fecha":"2026-10-29","tipo":"prueba"} -->
+
+<!-- item {"id":394,"tipo":"prueba","vigencia":"vigente","fecha":"2026-10-29","resumen":"Ida y vuelta byte a byte con datos difíciles y con los markdown reales; cuatro mutaciones detectadas","modulos":["memoria"],"archivos":["tests/test_importar_memoria.py"]} -->
+- **Pruebas:** exportar, importar en una base vacía y exportar da archivos idénticos (`-->`, comillas, separadores unicode, bloques de código con `#`, ids con huecos, entradas sin dividir). Mutaciones detectadas: cupo de invariantes en `contexto`, sangría de las marcas, escape de `--` y el id al importar. La suite pasó de 541 a 650 pruebas.
+  <!-- item {"id":395,"tipo":"prueba","vigencia":"vigente","fecha":"2026-10-29","resumen":"Ahorro medido: 40 % menos caracteres con `contexto(n=6)` y 2 detalles que con secciones enteras","modulos":["memoria"],"archivos":["memoria.py"]} -->
+- **Medición en tres tareas** (regla de temperatura en `salud.py`, tools permitidas del reporte, bug en el frontend), con las mismas consultas. Antes (`buscar_bitacora` con `completo`, secciones enteras): 4855, 9240 y 1296 caracteres. Ahora (`contexto(archivo, n=6)` más 2 `detalle_bitacora`): 2629, 4088 y 2490, es decir 46 %, 56 % y −92 %: 40 % en total. Con `n=12` por defecto el total baja solo 19 %. En el frontend la búsqueda vieja encontró una sola sección chica y ganó; lo que `contexto` agrega es que las invariantes y los pendientes del módulo aparecen siempre.
