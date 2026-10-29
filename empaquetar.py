@@ -1,4 +1,4 @@
-"""Arma el paquete de instalación para Windows: pc-doctor-windows-<versión>.zip y su .sha256, en la carpeta `paquetes/`.
+"""Arma el paquete de instalación para Windows: pc-doctor-Win-v<VERSION_PAQUETE>.zip y su .sha256, en la carpeta `paquetes/`.
 
 Uso: `uv run --with pillow empaquetar.py` (Pillow solo hace falta para generar icono.ico). Antes hay que compilar el frontend
 (`bash web/construir.sh`): el paquete lleva `web/frontend/dist/` ya compilado porque la PC de destino no tiene Node.
@@ -22,6 +22,7 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent
 SALIDA = RAIZ / "paquetes"
+VERSION_PAQUETE = "1.0"                 # versión del paquete de Windows (aparte de la de pyproject.toml)
 FECHA_ZIP = (2026, 1, 1, 0, 0, 0)       # fija: el mismo contenido da siempre el mismo zip (y el mismo SHA-256)
 
 # El código que corre en producción (en la raíz del zip, con la misma estructura que el repo).
@@ -129,7 +130,7 @@ def construir(raiz: Path = RAIZ, salida: Path | None = None) -> tuple[Path, str]
     verificar(contenido)
     salida = salida or SALIDA
     salida.mkdir(parents=True, exist_ok=True)
-    destino = salida / f"pc-doctor-windows-{version(raiz)}.zip"
+    destino = salida / f"pc-doctor-Win-v{VERSION_PAQUETE}.zip"
     with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for nombre in sorted(contenido):
             info = zipfile.ZipInfo(nombre, FECHA_ZIP)

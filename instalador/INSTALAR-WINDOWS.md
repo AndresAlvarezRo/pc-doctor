@@ -1,4 +1,4 @@
-# Instalar pc-doctor en Windows
+# Instalar pc-doctor en Windows (v1.0)
 
 pc-doctor vigila la salud de tu PC: temperaturas, discos, memoria, programas raros y errores del sistema. Te avisa con una notificación cuando algo anda mal y tiene un panel que se abre en el navegador. **Todo queda en tu PC.** No hace falta ser administrador.
 
@@ -9,7 +9,7 @@ pc-doctor vigila la salud de tu PC: temperaturas, discos, memoria, programas rar
 
 ## Instalar
 1. Hacé clic derecho en el archivo `.zip` → **Extraer todo…** y elegí una carpeta (por ejemplo, Descargas).
-2. (Recomendado) Comprobá que el archivo no se dañó. En PowerShell: `Get-FileHash pc-doctor-windows-*.zip` y comparalo con el número del archivo `.sha256`.
+2. (Recomendado) Comprobá que el archivo no se dañó. En PowerShell: `Get-FileHash pc-doctor-Win-v1.0.zip` y comparalo con el número del archivo `.sha256`.
 3. Abrí la carpeta extraída, hacé clic en la barra de direcciones, escribí `powershell` y apretá Enter.
 4. Escribí:
    ```
@@ -57,3 +57,6 @@ Quita las tareas, los accesos directos y el programa. **No borra tus datos**: qu
 
 ## Si Windows Defender protesta
 El instalador no descarga ni ejecuta nada que no esté fijado y verificado por su huella. Si Defender o SmartScreen avisan sobre `instalar.ps1`, es porque el archivo no está firmado por una empresa: podés leerlo (es texto) antes de ejecutarlo.
+
+## Qué todavía no está probado
+Esta versión se armó en una PC con Linux y **todavía no corrió en un Windows real**. Es probable que aparezcan detalles al instalarla. Si algo falla, el instalador se detiene con un mensaje y se puede volver a correr. Lo más delicado sin probar: las tareas programadas, el acceso directo, el registro en Claude Code y todo el paso opcional de sensores. Por eso conviene correr `-Verificar` al terminar y, si tenés Claude Code, usar `PROMPT-VERIFICACION.md`: deja un informe (`informe-instalacion.md`) con lo que encontró.
