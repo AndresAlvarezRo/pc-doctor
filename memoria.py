@@ -749,15 +749,35 @@ SECCION_INTRO = "Introducción"
 TIPO_CHANGELOG_TEXTO = {"error": "error", "solucion": "solución", "cambio": "cambio", "observacion": "observación"}
 
 
+RX_VINETA = re.compile(r"^(?:[-*+] |\d+[.)] )")
+
+
+def es_continuacion(texto: str) -> bool:
+    """Si un ítem se pega a lo anterior sin línea en blanco (una viñeta), en vez de empezar un párrafo."""
+    return bool(RX_VINETA.match(texto)) or texto.startswith((" ", "\t"))
+
+
+def marcas_de_item(f) -> list[str]:
+    """Líneas que se agregan al ítem exportado: si es una invariante (con el test que la protege) y si está superada. Nunca tocan el texto."""
+    marcas = []
+    if f["tipo"] == "invariante":
+        marcas.append(f"**(invariante · prueba: {' '.join(f['prueba'].split())})**" if f["prueba"] else "**(invariante)**")
+    if f["vigencia"] == "superada" and f["reemplazada_por"]:
+        marcas.append(f"(superada por #{f['reemplazada_por']}: {' '.join((f['motivo'] or '').split())})")
+    return marcas
+
+
 def _cuerpo_de(con, entrada, con_items: bool) -> str:
-    """El texto de una entrada: sus ítems en orden (cada bullet pegado al anterior; un párrafo, separado por una línea en blanco) o,
-    si no tiene ítems, su `contenido`."""
-    items = con.execute("SELECT contenido FROM bitacora_items WHERE entrada_id=? ORDER BY orden", (entrada["id"],)).fetchall() if con_items else []
+    """El texto de una entrada: sus ítems en orden o, si no tiene ítems, su `contenido`. Cada viñeta va pegada a lo anterior y un
+    párrafo, separado por una línea en blanco. Las marcas van en líneas aparte, después del ítem y sangradas si el ítem es una viñeta."""
+    items = con.execute("SELECT * FROM bitacora_items WHERE entrada_id=? ORDER BY orden", (entrada["id"],)).fetchall() if con_items else []
     if not items:
         return entrada["contenido"]
-    cuerpo = items[0]["contenido"]
-    for it in items[1:]:
-        cuerpo += ("\n" if it["contenido"].startswith(("- ", "  ")) else "\n\n") + it["contenido"]
+    cuerpo = ""
+    for k, it in enumerate(items):
+        sangria = "  " if es_continuacion(it["contenido"]) else ""
+        bloque = "\n".join([it["contenido"]] + [sangria + m for m in marcas_de_item(it)])
+        cuerpo += (("\n" if es_continuacion(it["contenido"]) else "\n\n") if k else "") + bloque
     return cuerpo
 
 

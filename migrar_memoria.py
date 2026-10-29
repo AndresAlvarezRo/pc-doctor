@@ -95,6 +95,39 @@ def parsear_bitacora(texto: str) -> tuple[str, list[dict]]:
     return _contenido(previo), entradas
 
 
+def dividir_en_items(contenido: str) -> list[str]:
+    """Parte el contenido de una entrada en ítems: una viñeta de primer nivel con sus subviñetas, o un párrafo. El texto de cada ítem
+    queda tal cual (los bloques de código no se parten); las líneas en blanco entre ítems se descartan, el exportador las vuelve a poner."""
+    items, actual, en_codigo = [], [], False
+
+    def cerrar():
+        nonlocal actual
+        if actual:
+            items.append("\n".join(actual))
+        actual = []
+
+    for linea in contenido.split("\n"):
+        if linea.lstrip().startswith("```"):
+            en_codigo = not en_codigo
+            actual.append(linea)
+        elif en_codigo:
+            actual.append(linea)
+        elif not linea.strip():
+            cerrar()
+        elif linea.startswith((" ", "\t")):
+            actual.append(linea)
+        elif memoria.RX_VINETA.match(linea):
+            cerrar()
+            actual = [linea]
+        elif actual and not memoria.RX_VINETA.match(actual[0]):       # sigue el mismo párrafo
+            actual.append(linea)
+        else:
+            cerrar()
+            actual = [linea]
+    cerrar()
+    return items
+
+
 # ---------- changelog ----------
 
 COMPONENTES = [   # (fragmento del título en minúsculas, componente); la primera coincidencia gana
