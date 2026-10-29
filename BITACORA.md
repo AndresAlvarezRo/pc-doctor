@@ -17,6 +17,7 @@ _2026-10-28 · nota_
 
 - **Base de datos fuera del repo:** `~/.local/share/pc-doctor/doctor.db`, como se pidió. Así el repo queda limpio y los datos no se versionan por error.
 - **Timestamps como epoch UTC (INTEGER):** se comparan y ordenan fácil, y los índices por `ts` rinden. La conversión a hora local se hace solo al mostrar.
+  **(invariante)**
 - **`metricas_diarias` con clave (workspace_id, dia):** se llena solo al aplicar la retención (resumir y luego borrar lo de más de 30 días). `historial` mezcla esos promedios diarios con las métricas crudas cuando el rango los incluye.
 - **Snapshot de entorno solo si cambia el hash** de kernel + driver GPU + lista de paquetes (apt, flatpak, snap). Evita llenar la base con copias idénticas de ~2500 paquetes cada 15 minutos.
 
@@ -24,6 +25,7 @@ _2026-10-28 · nota_
 _2026-10-28 · nota_
 
 - **Cada paso está aislado:** si falla uno (por ejemplo `journalctl`), se loguea y siguen los demás. Los comandos externos pasan por `db.ejecutar()`, que devuelve `None` si el comando no existe, falla o excede el timeout.
+  **(invariante)**
 - **Eventos del journal:** `journalctl -p err --since @<último ts> -n 50`. La primera corrida mira solo la última hora.
 
 ### Servidor MCP
@@ -36,6 +38,7 @@ _2026-10-28 · nota_
   - Se ignoran los symlinks y se comprueba que la ruta real siga dentro de esa carpeta.
   - Nunca se borra nada.
   - Restaurar no pisa un archivo que ya exista en la ruta original.
+  **(invariante · prueba: tests/test_cuarentena.py::test_ejecutar_nunca_borra_ningun_archivo)**
 
 ### Hardware agnóstico a fabricante (pedido del usuario)
 _2026-10-28 · nota_
@@ -54,6 +57,7 @@ _2026-10-28 · nota_
 - Lo único oculto era `.venv`. Se agregó el symlink visible `venv -> .venv`. No se renombró, para que el comando de registro del MCP y `uv` sigan funcionando sin variables de entorno extra.
 - Se agregó el symlink `datos -> ~/.local/share/pc-doctor` para ver la base y la cuarentena desde el proyecto. Los datos siguen físicamente fuera del repo.
 - Convención: no crear archivos ni carpetas con punto dentro del proyecto.
+  (superada por #270: El proyecto sube a git: se autorizó la excepción para .gitignore, .git/, .github/ y lo que git necesite.)
 
 ### systemd (archivos creados, **todavía sin instalar**)
 _2026-10-28 · nota_
@@ -62,6 +66,7 @@ _2026-10-28 · nota_
 - `systemd/pc-doctor.timer`: `OnBootSec=2min`, `OnUnitActiveSec=15min`, `Persistent=true`.
 - Nota: `Persistent=true` solo tiene efecto con `OnCalendar=`. Con los disparadores actuales es inofensivo y se dejó porque se pidió.
 - Los archivos viven en el proyecto. La instalación a `~/.config/systemd/user/` espera la aprobación del usuario.
+  (superada por #23: Las unidades se instalaron y el timer se activó con la aprobación del usuario.)
 
 ### Instalación y activación (Paso 6, aprobada por el usuario)
 _2026-10-28 · nota_
@@ -126,6 +131,7 @@ _2026-10-28 · nota_
   - Red: puertos TCP accesibles desde la red, terminales web sin autenticación y conexiones a IPs de botnets.
 - **Listas online usadas:** Feodo Tracker (IPs de C2, `abuse.ch`) y NoCoin (312 dominios de minado, GitHub). Descubierto al probar: las listas de CoinBlocker en GitLab piden login, algunas URLs de GitHub y de URLhaus devuelven 404/410, y ThreatFox/MalwareBazaar exigen clave de API. Por eso las firmas de pools y mineros también viven en el código.
 - **Privacidad:** las listas solo se descargan (máximo 1 vez cada 24 h, timeout de 10 s, tope de 5 MB, con copia previa si falla). No se envía nada de esta máquina a ningún servicio; no se consultan hashes de ejecutables online por ese motivo.
+  (superada por #64: Solo la parte «no se consultan hashes online»: ahora se consulta online únicamente el hash de ejecutables sospechosos.)
 - **Deduplicación:** cada hallazgo tiene una huella (categoría, regla, nombre y ruta o puerto, sin el pid) y se guarda una sola fila con `veces` y `ultima_vez`. Así el timer no genera ~96 filas por día por el mismo hallazgo. El estado `falso_positivo` o `revisado` se conserva si reaparece.
 - **Corre sin root:** no ve los descriptores de archivo de procesos de otros usuarios (45 de 450 en esta máquina) ni detecta rootkits. Queda documentado en las respuestas de las tools y en el README.
 - **Validación:** se simularon un `sleep` renombrado como `xmrig` en `/tmp`, otro con argumentos `stratum+tcp://pool.minexmr.com` y se detectaron los tres casos. Los procesos y archivos de prueba se eliminaron y no se guardaron en la base.
@@ -151,6 +157,7 @@ _2026-10-28 · nota_
 - Pedido (corrige mi planteo anterior de no consultar nada): los datos se guardan en la PC; online solo se consultan los procesos **sospechosos**, para alertar si alguno figura como malicioso. Las alertas en sí se trabajan después; ahora importa que el flujo funcione.
 - **Nuevo `reputacion.py`** y tabla `reputacion` (sha256, sha1, ruta, veredicto, fuente, detalle, fecha). Flujo: el escaneo local marca un hallazgo de severidad alta o media con ejecutable en disco, se calculan sus hashes **localmente**, se guardan y recién entonces se consulta online **únicamente ese hash**.
 - **Qué no sale de la PC:** archivos (nunca se sube nada binario), hashes de procesos no sospechosos y cualquier otro dato del sistema. Hallazgos de red o sin ejecutable no generan consultas. Se puede apagar todo con `"consulta_online": false` en `~/.local/share/pc-doctor/config.json` (el archivo se crea con los valores por defecto).
+  **(invariante)**
 - **Fuentes (probadas, sin clave):**
   - Team Cymru Malware Hash Registry, por DNS con SHA-1: detecta malware. Verificado con EICAR (100 %) y con un binario normal (sin registro).
   - CIRCL hashlookup, por HTTPS con SHA-256: base de archivos conocidos. Solo sirve para descartar, no para detectar.
@@ -159,6 +166,7 @@ _2026-10-28 · nota_
 - **Error corregido en la primera prueba:** EICAR no daba alerta porque CIRCL lo conoce como archivo existente (`eicar.com`) y mi lógica se detenía ahí. "Conocido" no es "limpio". Ahora se consultan todos los proveedores y un veredicto de malware siempre gana.
 - **Control de costo:** máximo 3 consultas nuevas por corrida, los veredictos se reutilizan por hash durante 7 días y los hallazgos que comparten ejecutable hacen una sola consulta. Los pendientes pasan a la corrida siguiente.
 - Un veredicto `malicioso` o `sospechoso` sube el hallazgo a severidad alta y queda en la lista `alertas` de `revision_seguridad()`. El aviso al usuario (notificación) queda pendiente.
+  (superada por #74: Las alertas de escritorio (notificaciones) ya están hechas.)
 - **Pruebas en una base temporal** (la real no se tocó): falso minero real en `/tmp` -> `sin_registro`, 1 sola consulta para 2 hallazgos; EICAR -> `malicioso` con alerta; segunda pasada -> 0 consultas (caché); con la consulta desactivada -> `sin_consultar`. Los archivos de prueba se eliminaron.
 - `hallazgos_seguridad()` ahora muestra la reputación de cada hallazgo. Costo en el recolector: ~2,0 s en total.
 
@@ -182,6 +190,7 @@ _2026-10-28 · nota_
 - Pedido: avisar con notificación de escritorio cada vez que algo salga de sus valores normales (temperatura de CPU, velocidad y estado de discos, memoria, estado de GPU y CPU, voltaje; todo lo que diagnostica pc-doctor).
 - **Inventario antes de diseñar** (lo que esta máquina expone sin root): temperaturas de CPU (`k10temp`), GPU (edge, junction, memoria) y NVMe; ventilador, voltaje del núcleo (`vddgfx`), potencia, uso y VRAM de la GPU; E/S, espacio y modo solo-lectura de los discos; RAM, carga y uso de CPU; mensajes del kernel (el usuario está en el grupo `adm`).
 - **No disponible, y se informa en lugar de inventarlo:** voltajes de la placa (el sensor `asus` no expone ninguno y no hay un chip tipo `nct6775` cargado) y temperatura o SMART de los discos SATA `sda` y `sdb` (falta `smartmontools`, el módulo `drivetemp` y permisos). Ambos requieren `sudo`, así que quedan pendientes de aprobación.
+  (superada por #113: El usuario ejecutó habilitar-sensores.sh: nct6775, drivetemp y SMART funcionan.)
 - **Nuevo `salud.py`**, con tres tablas: `lecturas` (sensores por corrida, con el límite crítico que informa el hardware), `alertas_salud` (estado de cada alerta: activa o resuelta, última notificación) y la configuración en `config.json`.
 - **Lectura agnóstica al fabricante:** recorre `/sys/class/hwmon` (cualquier chip: `k10temp`, `coretemp`, `amdgpu`, `nvme`, `drivetemp`, `nct*`...), `sysfs` de AMD para uso y VRAM, y `nvidia-smi` si existe. El parser de NVIDIA se probó con datos simulados (incluido `[N/A]`), pero no con una GPU NVIDIA real.
 - **Reglas de "valores normales":** 15 reglas con umbrales de aviso y crítico, y un número de lecturas consecutivas (una cada 15 min) para evitar avisar por picos: temperatura de CPU (85/92), GPU, disco y placa, uso de GPU y CPU sostenidos, VRAM, voltaje de GPU, carga, RAM, swap, espacio libre, saturación y solo-lectura de discos, y desviación de rieles de la placa.
@@ -198,11 +207,13 @@ _2026-10-28 · nota_
 - **Aviso previo antes de probar notificaciones reales:** se envió una única notificación marcada como [PRUEBA], con valores inventados y sin escribir nada en la base.
 - Retención: las lecturas se borran a los 30 días junto con las métricas crudas, sin resumen diario. Las alertas resueltas se borran a los 90 días.
 - Limitaciones: umbrales fijos, no aprendidos del historial de esta PC. Los voltajes de placa se evalúan solo si el kernel los expone con etiquetas de riel conocidas (+12 V, +5 V, +3,3 V). Las lecturas nuevas aún no se consultan desde `historial()`.
+  (superada por #107: Hoy hay umbrales aprendidos (anomalía y deriva) y historial() acepta cualquier sensor.)
 
 ### Habilitar voltajes y SMART (pedido del usuario) - preparado, pendiente de ejecutar
 _2026-10-28 · nota_
 
 - Pedido: habilitar los voltajes y el SMART. Requiere `sudo` y modifica `/etc`, por lo que **no se ejecutó**: se dejó el script `habilitar-sensores.sh` en el proyecto para que el usuario lo revise y lo ejecute.
+  (superada por #113: El usuario ejecutó el script y se verificó que los voltajes y el SMART funcionan.)
 - **Investigación previa (sin sudo):** `smartmontools` está en los repositorios y `drivetemp` existe en el kernel. Para los voltajes, ni `asus_ec_sensors` ni `asus_wmi_sensors` declaran la placa PRIME B550-PLUS; la única vía es `nct6775` (familia NCT679x), cuyo soporte para esta placa **no está confirmado**. Descubierto al revisar la lista de placas de cada driver.
 - **El script (idempotente):** instala `smartmontools`; carga `drivetemp` y lo deja permanente en `/etc/modules-load.d/pc-doctor.conf`; prueba `nct6775` y solo lo deja permanente si aparece un sensor real (si no carga, informa el motivo y no toca el arranque; el parámetro `acpi_enforce_resources=lax` queda como decisión del usuario); crea `/etc/sudoers.d/pc-doctor`.
 - **Permiso mínimo para el SMART:** una regla de sudoers que permite únicamente `smartctl -j -H -A` sobre cada disco, con esos argumentos exactos y sin contraseña. No permite otras opciones ni otros dispositivos. Se descartó añadir al usuario al grupo `disk` (da lectura cruda a todos los discos) y `setcap` sobre `smartctl` (cualquier proceso podría usarlo con sus capacidades). La regla se valida con `visudo -cf` antes de instalarse; el script generado se probó sin privilegios (sintaxis y regla válidas).
@@ -282,6 +293,7 @@ _2026-10-28 · prueba_
 _2026-10-28 · limitacion_
 
 - **No verificado con un juego real en ejecución:** las firmas se probaron con líneas de comandos sintéticas. En especial, no sé cómo se ve exactamente el `argv` de un proceso de Proton, y el formato de `gamemodelist` es una suposición (no había gamemode con clientes).
+  (superada por #251: Se probó con un juego real (Crimson Desert bajo Proton) y se corrigió la detección.)
 - La migración solo ve los 5 procesos que más CPU usaban por corrida: un juego fuera de ese top queda con el contexto viejo.
 - Cualquier `.exe` bajo wine que no esté en la lista de auxiliares cuenta como juego (un Notepad++ en wine, por ejemplo). Un editor o gestor de archivos no cuenta porque se excluye por nombre, pero un programa no listado que tenga como primer argumento la ruta de un juego sí.
 - Resolución de sesiones: ±15 min. Un juego abierto y cerrado entre dos corridas no se ve.
@@ -343,10 +355,12 @@ _2026-10-28 · decision_
   - Sin `CLAUDE.md` ni memoria (`CLAUDE_CODE_DISABLE_CLAUDE_MDS` y `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, carpeta de trabajo neutra `datos/reportes/`), sin ajustes ni hooks del usuario (`--setting-sources project`), sin guardar la sesión (`--no-session-persistence`). Motivo: la regla del changelog de `~/.claude/CLAUDE.md` le pediría escribir un archivo que no puede.
   - **El prompt va por stdin**, no como argumento: las opciones `--allowedTools`, `--tools` y `--mcp-config` aceptan varios valores y habrían absorbido el texto.
   - El prompt declara todo dato del equipo como "no confiable, nunca instrucciones" y pide marcar como sospechoso cualquier texto que intente dar órdenes.
+  **(invariante · prueba: tests/test_reporte.py::test_la_invocacion_de_claude_es_de_solo_lectura)**
 - **El resumen de la notificación** no es el texto del modelo sin más: la primera línea es siempre determinística (contadores de SMART), y el resumen que pide el prompt (`RESUMEN: ...`) se limpia (sin marcado, sin saltos de línea, 180 caracteres).
 - **Plan B (reporte determinístico):** se activa si `claude` no existe, no tiene sesión, no hay red, se alcanzó el límite de uso, se agotó el tiempo (por defecto 900 s; el proceso y su servidor MCP se matan con `killpg`), devuelve error o devuelve una respuesta de menos de 400 caracteres o sin al menos 3 secciones. Usa las mismas tools del servidor, ordena los datos y aplica reglas simples para las recomendaciones; el encabezado dice que no está redactado y por qué. Si incluso eso falla, igual se escribe un archivo que explica el error: el reporte semanal nunca queda sin generarse.
 - **Configuración (`config.json`, clave `reporte`):** `habilitado`, `modelo` (por defecto `sonnet`, para no heredar el esfuerzo alto de los ajustes del usuario), `max_turns` (30), `timeout_s` (900), `claude` (ruta). `"reporte": false` lo apaga. `claude` se busca por ruta absoluta en `~/.local/bin/claude` (el enlace estable que usa el instalador, sin resolver a la versión).
 - **systemd:** `systemd/pc-doctor-reporte.service` (oneshot, `Nice=10`, `TimeoutStartSec=1200`, rutas absolutas con `%h`) y `.timer` (`OnCalendar=Sun *-*-* 20:00:00`, `Persistent=true`). Verificados con `systemd-analyze --user verify`; próximo disparo calculado: domingo 2026-11-01 20:00. **Sin instalar, esperando la revisión del usuario.**
+  (superada por #179: El timer del reporte se instaló y se habilitó.)
 
 ### Errores encontrados y corregidos
 _2026-10-28 · error_
@@ -369,7 +383,9 @@ _2026-10-28 · prueba_
 _2026-10-28 · limitacion_
 
 - **Sin verificar:** una ejecución real de `claude -p` con tu sesión iniciada desde un servicio. Falta confirmar que el login está disponible fuera del terminal y que el modelo usa las tools como se espera. Costo: una consulta con varias llamadas a tools.
+  (superada por #180: La primera ejecución real desde un servicio, con la sesión del usuario, resolvió las tres dudas.)
 - Los nombres exactos de las tools MCP (`mcp__pc-doctor__<tool>`) se infirieron de la convención de Claude Code; si estuvieran mal, `dontAsk` denegaría todo y el reporte caería al plan B con el modelo sin datos útiles. La prueba real lo confirma.
+  (superada por #180: La ejecución real confirmó que los nombres mcp__pc-doctor__<tool> son correctos.)
 - Texto malicioso en los datos del equipo puede terminar en el archivo del reporte (no se filtra el contenido que redacta el modelo); el límite es que el modelo no puede ejecutar nada ni salir de pc-doctor.
 - Con `Persistent=true`, si la PC arranca después del domingo, el reporte puede correr apenas se enciende y antes de tener red: en ese caso queda el plan B de esa semana.
 - La línea base todavía no es madura: las "tendencias contra la línea base" serán pobres durante semanas.
@@ -385,11 +401,13 @@ _2026-10-28 · nota_
 ## Nivel nuevo 4: dashboard interactivo (pedido del usuario, en fases)
 
 El usuario pidió una app web local (FastAPI + React/Vite/TypeScript + Recharts) para ver y gestionar lo que pc-doctor diagnostica, en 5 fases con parada y OK al final de cada una. La Fase 4 original del nivel anterior (diagnóstico automático por alertas) queda **pendiente**; mientras tanto la sección "diagnósticos" del dashboard mostrará "no disponible todavía" porque la tabla `diagnosticos` no existe.
+- **Pendiente:** las fases 4 y 5 del dashboard (las acciones y la pantalla de configuración). Hoy es de solo lectura: la edición de los hechos conocidos y el botón de las notificaciones (`boton_dashboard`) esperan a esa fase.
 
 ### Fase 0: prerequisitos
 _2026-10-28 · nota_
 
 - **Node y npm no están instalados** (`node`, `npm`, `npx` no existen; tampoco fnm, volta, nvm, bun ni pnpm). Por pedido del usuario no se instaló nada y se le presentaron opciones. El repositorio de Ubuntu ofrece `nodejs 18.19.1` y `npm 9.2.0`; Node 18 terminó su soporte en abril de 2025, así que no sirve para versiones actuales de Vite.
+  (superada por #189: Node 24.22.2 se instaló aislado en datos/node (opción A, elegida por el usuario).)
 - **Puerto 8787:** libre (nada escucha). El servicio irá solo en `127.0.0.1`.
 - **Dependencias de Python:** `fastapi 0.162.0` y `uvicorn 0.54.0` agregadas con `uv add` (solo el entorno del proyecto, sin sudo). Compatibilidad: el MCP sigue cargando sus 22 tools y el recolector importa bien.
 - **Convención de archivos con punto:** `package.json`, `tsconfig.json` y `vite.config.ts` no llevan punto, así que no hace falta preguntar nada por ahora. Se arma el proyecto de Vite a mano para evitar el `.gitignore` que genera la plantilla (el proyecto no es un repositorio git). `node_modules/` será visible y grande (cientos de MB) dentro de `web/frontend/`.
@@ -408,7 +426,9 @@ _2026-10-28 · decision_
 
 - **Un módulo compartido, `consultas.py`, para que el dashboard y el MCP muestren exactamente lo mismo.** Las funciones de consulta (alertas, hallazgos, sesiones, estado en vivo, componentes, series, bandas, aprendizaje) salieron de las tools de `server.py` a este módulo, sin dependencias de FastMCP ni de FastAPI. Las tools ahora son envoltorios finos que recortan el resultado para el chat. Comprobado: la salida de las tools antes y después del refactor es idéntica (14 de 16 consultas iguales; las dos que diferían eran un dato nuevo del recolector y el orden de elementos con la misma hora, ya desempatado), y una prueba compara la API contra las tools sobre la misma base (12 comparaciones, 0 diferencias).
 - **Solo lectura de verdad, no por convención.** `db.SOLO_LECTURA` hace que `db.conectar()` abra la base con `mode=ro` y no toque el esquema; la API lo activa al importarse. Las acciones de la Fase 4 deberán pedir `escribir=True` de forma explícita. Comprobado: `INSERT`, `UPDATE`, `DELETE`, `DROP` y `CREATE` a través de la conexión de la API fallan con "attempt to write a readonly database", y el hash de la base no cambió tras ejecutar todas las pruebas.
+  **(invariante · prueba: tests/test_api.py::test_la_conexion_de_la_api_rechaza_cualquier_escritura)**
 - **Seguridad desde el primer día, no recién en la Fase 4:** solo `127.0.0.1`; se rechaza toda petición cuyo `Host` no sea `localhost:PUERTO` o `127.0.0.1:PUERTO` (421), lo que evita que una página externa lea los datos por DNS rebinding; solo se acepta `GET` (cualquier otro método da 405); `Cache-Control: no-store`, `X-Content-Type-Options`, `X-Frame-Options: DENY` y `Referrer-Policy`; sin cabeceras CORS. `/docs` y `/openapi.json` desactivados. El puerto se puede cambiar con `PC_DOCTOR_PUERTO` (las pruebas lo usan).
+  **(invariante · prueba: tests/test_api.py::test_solo_se_aceptan_los_host_locales_contra_dns_rebinding)**
 - **Bandas coherentes con las alarmas.** `linea_base.limites()` es ahora la única definición de "fuera de lo habitual" y la usan la detección de anomalías y el gráfico. Comprobado contra la implementación anterior con 24.000 casos aleatorios: 0 diferencias (en el borde exacto el resultado depende de la coma flotante, de forma irrelevante). La banda que devuelve la API tiene dos niveles: la zona típica (mediana ± 2 desvíos robustos) y los límites de anomalía (los que realmente disparan un aviso, que además exigen un cambio mínimo según el tipo de sensor). Los puntos de la serie traen `f` (fuera de los límites de su contexto) solo si esa línea base es madura.
 - **Series:** hasta 30 días usa las lecturas crudas, agrupadas en intervalos si pasan de 800 puntos (con mínimo y máximo de cada intervalo); sobre 30 días usa `lecturas_diarias` y solo las crudas de hoy. Cada punto lleva el contexto (`c`) y el juego en curso (`a`) para el tooltip.
 - **Componentes:** las lecturas se agrupan en cpu, gpu, ram, un componente por disco físico (más "Particiones"), ventiladores y voltajes por chip, y placa. El título de los discos sale del hardware del último snapshot; el de la GPU se extrae de la descripción de `lspci` para cualquier fabricante (`nombre_gpu`). Cada sensor trae estado (normal, aviso, crítico), referencia (aprendida, aprendiendo, fija o ninguna) y si está dentro de la banda de su contexto actual. Cada tarjeta resume `segun_linea_base` (dentro, fuera, aprendiendo, sin referencia).
@@ -452,6 +472,7 @@ _2026-10-28 · decision_
 - **Una sola página con 8 secciones**: encabezado, tarjetas de estado, vista de detalle, alertas y hallazgos, línea de tiempo (con la tabla de sesiones de juego), reportes y diagnósticos, limitaciones y sensores, entorno. Enrutado propio mínimo con la API de historial (`/`, `/componente/{tipo}?id=&sensor=` y `/alerta/{id}`): el servidor ya devuelve la misma página para esas rutas, así que los enlaces directos de la Fase 3 funcionan desde ahora.
 - **Un reloj de 60 s** (`tick`) que reactiva todos los pedidos sin recargar la página. Con la pestaña oculta no se pide nada, y al volver se actualiza si pasó más de un minuto. La hora de la última actualización exitosa figura en el encabezado, con un botón "Actualizar". Si un pedido falla se conservan los últimos datos y se avisa una sola vez, arriba.
 - **Colores con significado, nunca solos**: cada estado lleva color, ícono (círculo con tilde, triángulo, octógono con cruz) y texto; los puntos fuera de lo habitual son rombos, no solo un color distinto. Modo claro y oscuro según el sistema (variables CSS). Foco visible, enlace para saltar al contenido, `aria-pressed` en los selectores y descripción de texto del gráfico.
+  **(invariante)**
 - **Gráfico**: línea medida; detrás, la zona habitual aprendida (mediana ± 2 desvíos robustos) **según el contexto de cada punto** (por eso en "Todos" la banda cambia de altura entre reposo, carga y juego); con un contexto elegido, además, líneas punteadas con los límites de aviso. Rombos para lo que cae fuera de esos límites. El globo muestra valor, hora, contexto, juego en curso, mínimo y máximo si es un promedio diario, y lo habitual de ese contexto. Rangos: 24 h, 7, 30 días y 6 meses.
 - **Reportes**: el Markdown se renderiza con react-markdown, que no interpreta HTML crudo, y los enlaces se abren en otra pestaña con `noopener noreferrer nofollow`. Importa porque el texto lo redacta un modelo a partir de datos del equipo.
 - **Carga diferida**: Recharts y el renderizador de Markdown pesaban casi todo el JavaScript (825 KB). Con `React.lazy` el paquete inicial quedó en 251 KB (78 KB comprimido); el detalle (404 KB) y los reportes (168 KB) se bajan al usarlos.
@@ -552,6 +573,7 @@ _2026-10-28 · nota_
 ## Nivel nuevo 5: flujo de git automatizado (pedido del usuario, en fases)
 
 El usuario subió el proyecto a GitHub (`origin/main`, un commit inicial) y pidió automatizar el flujo de cambios en 4 fases con parada y OK al final de cada una: suite de pruebas permanente, hook pre-commit, regla de commits en `CLAUDE.md` y GitHub Actions. **Excepción a la convención de archivos con punto, autorizada por el usuario:** `.gitignore`, `.git/`, `.github/` y lo que git necesite. Además: no usar `sudo`, no tocar la base real ni los servicios instalados.
+**(invariante)**
 
 ### Fase 1: suite de pruebas permanente (`tests/`)
 
@@ -561,6 +583,7 @@ _2026-10-28 · decision_
 - **pytest 9.2 y pytest-cov 7.1** como dependencias de desarrollo (`uv add --dev`); `httpx` ya estaba (lo trae `mcp`) y lo usa el cliente de pruebas de FastAPI. Configuración en `pyproject.toml`: `testpaths`, `pythonpath`, dos marcadores y la cobertura. `uv run pytest` corre todo.
 - **Se rescataron las pruebas de verdad, no se reescribieron de cero.** Las de las fases recientes estaban en el scratchpad; las de las primeras etapas (reglas de salud, línea base, deriva, SMART, migración, regresión) ya no existían como archivos, pero cada script que se ejecutó quedó en la transcripción de la conversación, así que se extrajeron de ahí. Las pruebas pasaron de scripts con `print` a funciones de pytest con fixtures y parámetros (los casos repetidos son ahora parametrizados: por ejemplo, 25 líneas de comandos de juegos o 23 parámetros inválidos de la API).
 - **Aislamiento total, en `tests/conftest.py`, antes de importar cualquier módulo del proyecto:** carpeta de datos y `HOME` temporales (así `Path.home()` apunta a una carpeta vacía y nada lee `~/.steam`, `~/.local/bin/claude` ni la base real), `PATH` con los reemplazos de `tests/falsos/` al principio (`notify-send`, `systemd-run`, `systemctl`, `gdbus`, `xdg-open`, `claude`), puerto de pruebas 8795 (nunca el 8787 del dashboard real) y una barrera al iniciar la sesión que aborta todo si la carpeta de datos apuntara a la real. En cada prueba, `salud.leer_lecturas`, `actividad.detectar` y los juegos de Steam están reemplazados por datos sintéticos, salvo en las marcadas `local`.
+  **(invariante · prueba: tests/conftest.py::pytest_sessionstart)**
 - **Marcadores:** `local` (4 pruebas que leen sensores y procesos reales de esta PC; se saltean en CI con `-m "not local"`) y `lento` (189 pruebas que levantan procesos, esperan, crean repositorios git temporales o generan los datos sintéticos grandes; el pre-commit las saltea con `-m "not lento"`).
 - **Datos sintéticos compartidos:** las pruebas de la API usan `web/datos_de_prueba.py`, que ahora acepta un segundo argumento con la cantidad de días (45 en las pruebas, 120 por defecto).
 - **Una prueba específica contra regresiones de seguridad del reporte:** inspecciona el código fuente de cada tool que se le permite a `claude -p` y falla si alguna tiene un efecto (escribir, mover archivos, consultar online); y verifica que toda tool permitida exista en el servidor.
@@ -611,6 +634,7 @@ _2026-10-28 · decision_
 
 - **Hook en Python** (más fácil de probar y de leer que en shell), versionado en `scripts/pre-commit`. `scripts/instalar-hooks.sh` lo enlaza en `.git/hooks/pre-commit` con un enlace relativo, se puede repetir sin problema y, si ya había otro hook, lo guarda como `pre-commit.antes`. Ya está instalado en este repositorio.
 - **Bloquea por nombre:** cualquier archivo `.db` (y `-wal`, `-shm`, copias como `doctor.db.antes-de-juego-…`, `.sqlite`), `config.json`, `web_token` y todo lo que esté bajo `datos/` (incluido el enlace simbólico `datos`).
+  **(invariante · prueba: tests/test_hook.py::test_bloquea_datos_y_secretos_por_su_nombre)**
 - **Bloquea por contenido:** tokens de GitHub (`ghp_`, `gho_`…, `github_pat_`), claves de Anthropic, OpenAI, AWS, Slack y Google, claves privadas (`-----BEGIN … PRIVATE KEY-----`), `password=` (y `passwd`, `pwd`, `contraseña`) con un valor, y claves de API, secretos o tokens de 32 caracteres o más asignados a un nombre clave.
 - **Bloquea por tamaño:** más de 1 MiB (1.048.576 bytes; justo 1 MiB pasa).
 - **Bloquea si fallan las pruebas rápidas** (`uv run pytest -m "not lento"`, ~9 s). Si `uv` no está, bloquea con un mensaje claro. Los problemas de archivos se informan sin correr las pruebas.
@@ -647,6 +671,7 @@ _2026-10-28 · nota_
 - **Actions fijadas por SHA de commit**, resuelto desde la API de GitHub y verificado contra el repositorio de cada action: `actions/checkout` v7.0.1 (`3d3c42e5…`, 17/07/2026), `astral-sh/setup-uv` v10.3.0 (`1c37ad07…`, 09/10/2026) y `actions/setup-node` v7.1.0 (`949feb24…`, 08/10/2026). Todas con más de 2 semanas; `setup-uv` v10.3.3 es de hoy y se descartó por reciente.
 - **Simulación previa de CI:** copia limpia con solo los archivos que git versionaría, entorno mínimo (`env -i`), zona horaria UTC (la de GitHub; esta PC está en UTC-3) y `HOME` vacío: 381 pruebas pasan, y `npm ci` + `npm run build` compilan. Sin esto no habría forma de saber, antes de subir, si alguna prueba dependía de la máquina.
 - **Limitación:** no se pudo probar en GitHub antes de subirlo; la verificación real es `gh run watch` tras el push.
+  (superada por #317: Se verificó en GitHub: el primer push dejó main en rojo y se corrigió.)
 
 #### Primera corrida de CI: falló una prueba (carrera entre pruebas) y su corrección
 _2026-10-28 · nota_
@@ -668,10 +693,14 @@ _2026-10-28 · decision_
 
 - **`memoria.py`** concentra el esquema y la lógica de las cuatro tablas (`memoria`, `hechos_conocidos`, `bitacora`, `changelog`); `server.py` solo envuelve. Son 12 tools nuevas (ya son 35).
 - **Las tablas no están en `db.ESQUEMA`:** `db.conectar()` lo aplica en cada corrida del recolector (cada 15 min, con el código del proyecto), y la base real no debe cambiar antes de la migración. Las tablas se crean al **escribir** (`asegurar()`); las lecturas devuelven vacío si no existen. Una prueba verifica que ninguna lectura crea tablas.
+  **(invariante · prueba: tests/test_memoria.py::test_la_base_normal_no_trae_las_tablas_de_memoria)**
 - **Búsqueda FTS5** (`unicode61 remove_diacritics 2`, tablas de contenido externo con triggers de sincronización) para `memoria` y también para `bitacora`. La consulta del usuario nunca llega cruda a FTS5: se reduce a palabras, cada una entre comillas y como prefijo; primero se exigen todas y, si no hay resultados, alcanza con alguna. Orden por relevancia (bm25) con más peso al tema/título.
 - **Hechos conocidos:** `agregar_hecho_conocido` y `retirar_hecho_conocido` dicen en el docstring que solo se usan si el usuario lo pide en la conversación, y dejan constancia en `acciones`. `vence` es AAAA-MM-DD (no puede ser pasada); un hecho vencido deja de contar como activo. `aplica_a` se compara por segmentos (`sdb` aplica a `smart_crc:sdb/errores_crc`, pero `fan1` no aplica a `fan10`).
+  **(invariante · prueba: tests/test_memoria.py::test_los_hechos_conocidos_solo_se_escriben_con_la_intervencion_del_usuario_y_el_docstring_lo_dice)**
 - **Nada se borra:** `olvidar` y `retirar_hecho_conocido` marcan como inactivo.
+  **(invariante · prueba: tests/test_memoria.py::test_olvidar_lo_saca_de_las_busquedas_sin_borrarlo)**
 - **El reporte semanal** (`claude -p`) no puede usar ninguna de las tools nuevas todavía: las de escritura y las de memoria quedaron en `HERRAMIENTAS_PROHIBIDAS`. La Fase 2 le permitirá solo `hechos_conocidos`.
+  (superada por #338: A claude -p se le agregó únicamente hechos_conocidos (lectura).)
 - **Desvíos pequeños respecto al pedido:** `changelog` tiene una columna opcional `titulo` (las entradas del archivo tienen título y no cabía en otro campo), `registrar_changelog` acepta ese `titulo` opcional y `recordar` acepta un `origen` opcional (por defecto `agente`).
 
 #### Pruebas
@@ -688,6 +717,7 @@ _2026-10-28 · error_
 _2026-10-28 · limitacion_
 
 - Todavía nada usa los hechos conocidos (Fase 2) y la base real no tiene las tablas (Fase 3).
+  (superada por #333: Los hechos conocidos ya tienen efecto sobre las alertas y la base real tiene las tablas.)
 
 ### Fase 2: los hechos conocidos tienen efecto
 
@@ -695,6 +725,7 @@ _2026-10-28 · limitacion_
 _2026-10-28 · decision_
 
 - **Un hecho conocido silencia lo conocido, no lo nuevo.** `memoria.filtrar_avisos` se aplica al final de `salud.aplicar_condiciones`. Mira **todas** las condiciones vigentes, no solo las que tocaba avisar: un empeoramiento puede ocurrir en medio de la ventana de repetición (6 h en avisos, 2 h en críticos) y, si solo se filtraran los candidatos, no llegaría nunca (lo encontró una prueba).
+  **(invariante · prueba: tests/test_hechos_efecto.py::test_un_contador_de_smart_que_sube_avisa_aclarando_el_hecho_conocido)**
 - **Qué cubre un hecho:** `aplica_a` se compara por segmentos (`:` y `/`) con la clave de la alerta (`smart_pendientes:sdb/sectores_pendientes`) o con el nombre del sensor. `sdb` cubre todos los contadores de sdb; `sdb/errores_crc` solo ese.
 - **Qué es "empeorar":** se anota el estado con el que quedó silenciada cada alerta (tabla `hechos_referencia`: severidad y valor; se crea solo cuando existe algún hecho). Empeora si sube la severidad (aviso→crítico) o si el valor se aleja de lo normal: en los contadores de SMART, **cualquier aumento** (un sector más ya es novedad); en lo demás, un cambio de más del 5 % (en las reglas de mínimo, como el espacio libre, empeorar es bajar). En los eventos del journal el valor es su hora, así que solo cuenta la escalada de severidad. Al avisar un empeoramiento, el nuevo estado pasa a ser la referencia: no se repite hasta que vuelva a empeorar. El aviso dice `[hecho conocido #N: empeoró (antes X)]`.
 - **Si la alerta se resuelve** se olvida su referencia (al volver cuenta como primera vez). Si el hecho se **retira o vence**, deja de silenciar y la próxima corrida avisa. Si el hecho se declara con la alerta ya activa, se silencia desde ese momento, también los recordatorios.
@@ -748,6 +779,7 @@ _2026-10-28 · limitacion_
 - El `componente` del changelog es una deducción por palabras del título, no un dato del archivo original.
 - Las fechas de la bitácora son todas 2026-10-28 porque los archivos solo tenían esa fecha.
 - Durante esta fase se escribió en `bitacora` y no en `BITACORA.md`: el archivo no tiene lo de la Fase 3 hasta que la Fase 4 lo regenere desde la tabla.
+  (superada por #374: BITACORA.md y CHANGELOG.md se reemplazaron por lo exportado.)
 
 ### Fase 4
 

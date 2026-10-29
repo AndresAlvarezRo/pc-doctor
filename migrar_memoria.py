@@ -2,18 +2,24 @@
 
     uv run migrar_memoria.py              simula: muestra qué se migraría y no escribe nada
     uv run migrar_memoria.py --ejecutar   escribe en la base
+    uv run migrar_memoria.py --items PROPUESTA.json [--ejecutar]
+                                          divide las entradas de la bitácora ya migradas en ítems (tipo, módulos, vigencia, resumen...)
+                                          según una propuesta revisada; exige la copia `doctor.db.antes-de-items-*`
 
 Reglas: no borra ni modifica ningún markdown; se niega a escribir si no hay una copia previa de la base
 (`doctor.db.antes-de-memoria-*`) o si las tablas ya tienen datos; escribe todo en una sola transacción y deja constancia en `acciones`.
 """
 
+import json
 import re
+import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import db
 import memoria
+import modulos as mapa_modulos
 
 RAIZ = Path(__file__).resolve().parent
 FECHA_INICIAL = "2026-10-28"                       # el único día con fecha en los archivos: todo el proyecto es de ese día
@@ -262,7 +268,128 @@ def migrar(con, datos: dict) -> dict:
     return {t: con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ("bitacora", "changelog", "memoria")}
 
 
+# ---------- bitácora en ítems ----------
+
+def copias_previas_items() -> list[Path]:
+    return sorted(db.DIR_DATOS.glob("doctor.db.antes-de-items-*"))
+
+
+def unir_items(textos: list[str]) -> str:
+    """Lo contrario de `dividir_en_items`: pega las viñetas y separa los párrafos con una línea en blanco (como el exportador)."""
+    cuerpo = textos[0]
+    for t in textos[1:]:
+        cuerpo += ("\n" if memoria.es_continuacion(t) else "\n\n") + t
+    return cuerpo
+
+
+def validar_items(con, propuesta: list[dict]) -> list[str]:
+    """Problemas que impedirían migrar (lista vacía si está todo bien). No escribe. Exige que los ítems de cada entrada, unidos, den
+    exactamente su texto actual: así no se pierde ni se reordena nada; y que el `n` de cada ítem sea su futuro id."""
+    if not memoria.existe(con, "bitacora"):
+        return ["La base no tiene la tabla bitacora."]
+    problemas, vistos = [], {}
+    if [d["n"] for d in propuesta] != list(range(1, len(propuesta) + 1)):
+        problemas.append("Los `n` de la propuesta deben ser 1, 2, 3... sin saltos: son los ids de los ítems.")
+    entradas = {f["id"]: f["contenido"] for f in con.execute("SELECT id, contenido FROM bitacora")}
+    por_entrada: dict[int, list[str]] = {}
+    for d in propuesta:
+        if d["entrada"] not in entradas:
+            problemas.append(f"#{d['n']}: la entrada {d['entrada']} no existe.")
+        elif not d.get("nuevo"):
+            por_entrada.setdefault(d["entrada"], []).append(d["texto"])
+        vistos[d["n"]] = d
+    for eid, contenido in entradas.items():
+        textos = por_entrada.get(eid)
+        if not textos:
+            problemas.append(f"La entrada {eid} no tiene ítems en la propuesta.")
+        elif unir_items(textos) != contenido:
+            problemas.append(f"La entrada {eid}: sus ítems, unidos, no dan su texto actual.")
+    for d in propuesta:
+        n = d["n"]
+        if d["tipo"] not in memoria.TIPOS_ITEM or d["vigencia"] not in memoria.VIGENCIAS:
+            problemas.append(f"#{n}: tipo o vigencia inválidos.")
+        if not d["modulos"] or any(m not in mapa_modulos.MODULOS for m in d["modulos"]):
+            problemas.append(f"#{n}: módulos inválidos {d['modulos']}.")
+        if not d["resumen"].strip() or len(d["resumen"]) > memoria.MAX_RESUMEN or "\n" in d["resumen"]:
+            problemas.append(f"#{n}: el resumen debe ser una línea de hasta {memoria.MAX_RESUMEN} caracteres.")
+        if (d["vigencia"] == "superada") != bool(d.get("reemplazada_por")):
+            problemas.append(f"#{n}: superada y reemplazo van juntos.")
+        if d.get("reemplazada_por"):
+            r = vistos.get(d["reemplazada_por"])
+            if r is None or r["vigencia"] != "vigente" or r["n"] == n:
+                problemas.append(f"#{n}: lo reemplaza #{d['reemplazada_por']}, que no existe o no está vigente.")
+            if not (d.get("motivo") or "").strip():
+                problemas.append(f"#{n}: falta el motivo.")
+    return problemas
+
+
+def migrar_items(con, propuesta: list[dict]) -> dict:
+    """Escribe los ítems en una sola transacción (las tablas se crean antes). Se niega si hay problemas o si ya hay ítems."""
+    memoria.asegurar(con)
+    problemas = validar_items(con, propuesta)
+    if problemas:
+        raise ValueError("La propuesta no es válida:\n- " + "\n- ".join(problemas[:20]))
+    if con.execute("SELECT COUNT(*) FROM bitacora_items").fetchone()[0]:
+        raise RuntimeError("La tabla bitacora_items ya tiene datos: la migración no se repite.")
+    try:
+        con.execute("BEGIN")
+        orden: dict[int, int] = {}
+        for d in propuesta:
+            orden[d["entrada"]] = orden.get(d["entrada"], 0) + 1
+            nuevo = memoria.crear_item(con, d["entrada"], d["fecha"], d["tipo"], d["resumen"].strip(), d["texto"], d["modulos"], d["archivos"],
+                                       d.get("prueba") or "", d["vigencia"] if d["vigencia"] != "superada" else "vigente", orden[d["entrada"]])
+            if nuevo != d["n"]:
+                raise RuntimeError(f"El ítem #{d['n']} quedó con el id {nuevo}: la base no estaba vacía.")
+        for d in propuesta:
+            if d["vigencia"] == "superada":
+                con.execute("UPDATE bitacora_items SET vigencia='superada', reemplazada_por=?, motivo=? WHERE id=?", (d["reemplazada_por"], d["motivo"].strip(), d["n"]))
+        res = {"items": len(propuesta), "nuevos": sum(bool(d.get("nuevo")) for d in propuesta), "superadas": sum(d["vigencia"] == "superada" for d in propuesta),
+               "historicas": sum(d["vigencia"] == "historica" for d in propuesta), "invariantes": sum(d["tipo"] == "invariante" for d in propuesta),
+               "pendientes": sum(d["tipo"] == "pendiente" for d in propuesta)}
+        con.execute("INSERT INTO acciones (ts, tool, parametros, resultado) VALUES (?,?,?,?)", (db.ahora(), "migrar_memoria", '{"items": true}', str(res)))
+        con.commit()
+    except BaseException:
+        con.rollback()
+        raise
+    return res
+
+
+def main_items(argv: list[str]) -> int:
+    i = argv.index("--items")
+    if i + 1 >= len(argv):
+        print("--items necesita el archivo de la propuesta (JSON).", file=sys.stderr)
+        return 2
+    propuesta = json.loads(Path(argv[i + 1]).expanduser().read_text(encoding="utf-8"))
+    if "--ejecutar" not in argv:      # simulación: solo lectura, no crea tablas
+        if not db.RUTA_DB.exists():
+            print("No hay base de datos.", file=sys.stderr)
+            return 1
+        con = sqlite3.connect(f"file:{db.RUTA_DB}?mode=ro", uri=True, timeout=10)
+        con.row_factory = sqlite3.Row
+        try:
+            problemas = validar_items(con, propuesta)
+        finally:
+            con.close()
+        print(f"Se migrarían {len(propuesta)} ítems." + (f" Problemas ({len(problemas)}):\n- " + "\n- ".join(problemas[:20]) if problemas else " La propuesta es válida."))
+        print("Simulación: no se escribió nada. Con --ejecutar se escribe en la base.")
+        return 1 if problemas else 0
+    if not copias_previas_items():
+        print("No encuentro una copia previa (doctor.db.antes-de-items-*). Hacela con VACUUM INTO antes de migrar.", file=sys.stderr)
+        return 1
+    con = db.conectar()
+    try:
+        print("Escrito:", migrar_items(con, propuesta))
+    except (RuntimeError, ValueError) as e:
+        print(e, file=sys.stderr)
+        return 1
+    finally:
+        con.close()
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if "--items" in argv:
+        return main_items(argv)
     datos = reunir()
     print(f"Se migrarían: {len(datos['bitacora'])} entradas de bitácora, {len(datos['changelog'])} del changelog "
           f"({sum(e['estado'] == 'abierto' for e in datos['changelog'])} abiertas), {len(datos['memoria'])} recuerdos y {len(datos['identidad'])} filas de identidad.")

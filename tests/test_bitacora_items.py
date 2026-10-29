@@ -1,5 +1,6 @@
 """Bitácora en ítems: esquema, mapa de módulos, contexto por tarea, detalle, pendientes y superadas."""
 
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -440,3 +441,145 @@ def test_el_markdown_marcado_sigue_siendo_valido_una_marca_no_abre_otro_item(con
     lineas = memoria.exportar_bitacora(con).splitlines()
     marca = next(i for i, l in enumerate(lineas) if "(invariante)" in l)
     assert lineas[marca].startswith("  ") and lineas[marca - 1] == "- Regla" and lineas[marca + 1] == "- Otra"
+
+
+# ---------- migración a ítems (fase 3) ----------
+
+import json as _json
+
+import db
+
+BITACORA_SINTETICA = {
+    1: ("Nivel 1", "Decisiones", "decision", "- **Uno:** primera decisión.\n  - con subpunto\n- **Dos:** segunda."),
+    2: ("Nivel 1", "Limitaciones", "limitacion", "Un párrafo suelto.\n- Y una viñeta después.\n- Pendiente: hacer algo."),
+    3: ("Nivel 2", "Pruebas", "prueba", "- Corrida vieja de una vez."),
+}
+
+
+def sembrar_entradas(con):
+    memoria.asegurar(con)
+    for i, (sec, tit, tipo, cont) in BITACORA_SINTETICA.items():
+        con.execute("INSERT INTO bitacora (id, fecha, seccion, tipo, titulo, contenido) VALUES (?,?,?,?,?,?)", (i, "2026-10-28", sec, tipo, tit, cont))
+    con.commit()
+
+
+def propuesta_sintetica():
+    p, n = [], 0
+    for eid, (sec, tit, tipo, cont) in BITACORA_SINTETICA.items():
+        for t in mm.dividir_en_items(cont):
+            n += 1
+            p.append({"n": n, "entrada": eid, "seccion": sec, "titulo": tit, "fecha": "2026-10-28", "tipo": tipo, "modulos": ["memoria"], "archivos": [],
+                      "vigencia": "vigente", "reemplazada_por": None, "motivo": None, "resumen": f"Resumen {n}", "prueba": "", "nuevo": False, "texto": t})
+    return p
+
+
+@pytest.fixture
+def propuesta(con):
+    sembrar_entradas(con)
+    return propuesta_sintetica()
+
+
+def hechos(con):
+    return con.execute("SELECT COUNT(*) FROM bitacora_items").fetchone()[0]
+
+
+def test_migrar_items_escribe_con_el_id_igual_al_n_y_deja_constancia(con, propuesta):
+    propuesta[0].update(tipo="invariante", prueba="tests/x.py::test_y")
+    propuesta[1].update(vigencia="superada", reemplazada_por=5, motivo="porque sí")   # 5 = la viñeta «Y una viñeta después»
+    propuesta[2].update(vigencia="historica", archivos=["salud.py"], modulos=["salud", "datos"])
+    propuesta.append({**propuesta[0], "n": 7, "tipo": "pendiente", "vigencia": "vigente", "prueba": "", "nuevo": True, "entrada": 3,
+                      "texto": "- Un pendiente nuevo.", "resumen": "Pendiente nuevo"})
+    antes = memoria.exportar_bitacora(con)
+    r = mm.migrar_items(con, propuesta)
+    assert r == {"items": 7, "nuevos": 1, "superadas": 1, "historicas": 1, "invariantes": 1, "pendientes": 1}
+    f = {x["id"]: x for x in con.execute("SELECT * FROM bitacora_items")}
+    assert sorted(f) == [1, 2, 3, 4, 5, 6, 7] and f[1]["tipo"] == "invariante" and f[1]["prueba"] == "tests/x.py::test_y"
+    assert (f[2]["vigencia"], f[2]["reemplazada_por"], f[2]["motivo"]) == ("superada", 5, "porque sí") and f[3]["vigencia"] == "historica"
+    assert [x["orden"] for x in con.execute("SELECT orden FROM bitacora_items WHERE entrada_id=1 ORDER BY id")] == [1, 2]
+    assert [x[0] for x in con.execute("SELECT modulo FROM bitacora_item_modulo WHERE item_id=3 ORDER BY modulo")] == ["datos", "salud"]
+    assert con.execute("SELECT ruta FROM bitacora_item_archivo WHERE item_id=3").fetchone()[0] == "salud.py"
+    assert con.execute("SELECT COUNT(*) FROM acciones WHERE tool='migrar_memoria'").fetchone()[0] == 1
+    despues = con_texto(memoria.exportar_bitacora(con))
+    assert es_subsecuencia(con_texto(antes), despues) and any("(superada por #5: porque sí)" in l for l in despues)         # no pierde líneas
+    assert memoria.contexto(con, tipo="invariante")["items"][0]["id"] == 1 and ids(memoria.pendientes(con), "pendientes") == [7]
+
+
+def test_migrar_items_no_se_repite(con, propuesta):
+    mm.migrar_items(con, propuesta)
+    with pytest.raises(RuntimeError, match="ya tiene datos"):
+        mm.migrar_items(con, propuesta)
+    assert hechos(con) == len(propuesta)
+
+
+@pytest.mark.parametrize("cambio,donde", [
+    (lambda p: p[0].update(texto="- otra cosa"), "no dan su texto actual"),
+    (lambda p: p.pop(), "no tiene ítems"),
+    (lambda p: p[0].update(modulos=["inventado"]), "módulos inválidos"),
+    (lambda p: p[0].update(resumen="x" * 121), "resumen"),
+    (lambda p: p[0].update(tipo="otro"), "tipo o vigencia"),
+    (lambda p: p[0].update(vigencia="superada", reemplazada_por=2, motivo="m") or p[1].update(vigencia="historica"), "no está vigente"),
+    (lambda p: p[0].update(vigencia="superada", reemplazada_por=2), "falta el motivo"),
+    (lambda p: p[0].update(vigencia="superada"), "van juntos"),
+    (lambda p: p[1].update(n=9), "sin saltos"),
+    (lambda p: p[0].update(entrada=99), "no existe"),
+])
+def test_una_propuesta_invalida_no_escribe_nada(con, propuesta, cambio, donde):
+    cambio(propuesta)
+    with pytest.raises(ValueError, match=donde):
+        mm.migrar_items(con, propuesta)
+    assert hechos(con) == 0
+
+
+def test_si_algo_falla_a_mitad_no_queda_nada_a_medias(con, propuesta, monkeypatch):
+    original, llamadas = memoria.crear_item, []
+
+    def falla_en_el_tercero(*a, **k):
+        llamadas.append(1)
+        if len(llamadas) == 3:
+            raise sqlite3.IntegrityError("falla de prueba")
+        return original(*a, **k)
+
+    monkeypatch.setattr(memoria, "crear_item", falla_en_el_tercero)
+    with pytest.raises(sqlite3.IntegrityError):
+        mm.migrar_items(con, propuesta)
+    assert hechos(con) == 0 and con.execute("SELECT COUNT(*) FROM bitacora_item_modulo").fetchone()[0] == 0
+    assert con.execute("SELECT COUNT(*) FROM acciones WHERE tool='migrar_memoria'").fetchone()[0] == 0
+
+
+@pytest.fixture
+def archivo_propuesta(tmp_path, con, propuesta):
+    con.close()
+    ruta = tmp_path / "propuesta.json"
+    ruta.write_text(_json.dumps(propuesta), encoding="utf-8")
+    return str(ruta)
+
+
+def test_la_simulacion_de_items_no_escribe(archivo_propuesta, capsys):
+    assert mm.main(["--items", archivo_propuesta]) == 0 and "Simulación" in capsys.readouterr().out
+    c = db.conectar()
+    assert hechos(c) == 0
+    c.close()
+
+
+def test_la_simulacion_de_items_avisa_de_los_problemas(archivo_propuesta, tmp_path, capsys):
+    p = _json.loads(open(archivo_propuesta, encoding="utf-8").read())
+    p[0]["texto"] = "- cambiado"
+    malo = tmp_path / "malo.json"
+    malo.write_text(_json.dumps(p), encoding="utf-8")
+    assert mm.main(["--items", str(malo)]) == 1 and "no dan su texto actual" in capsys.readouterr().out
+
+
+def test_sin_copia_previa_de_items_no_escribe(archivo_propuesta, capsys):
+    assert mm.main(["--items", archivo_propuesta, "--ejecutar"]) == 1 and "antes-de-items" in capsys.readouterr().err
+    c = db.conectar()
+    assert hechos(c) == 0
+    c.close()
+
+
+def test_con_copia_previa_de_items_escribe_y_no_se_repite(archivo_propuesta, capsys):
+    (db.DIR_DATOS / "doctor.db.antes-de-items-1").write_text("")
+    assert mm.main(["--items", archivo_propuesta, "--ejecutar"]) == 0 and "'items': 6" in capsys.readouterr().out
+    c = db.conectar()
+    assert hechos(c) == 6
+    c.close()
+    assert mm.main(["--items", archivo_propuesta, "--ejecutar"]) == 1
