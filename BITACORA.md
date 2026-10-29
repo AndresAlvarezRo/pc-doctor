@@ -1665,3 +1665,37 @@ _2026-10-29 · limitacion_
   - Una alerta de aviso sin hecho y sin diagnóstico previo solo dispara si es de SMART; las críticas disparan siempre al aparecer.
   - Si el tope diario se agota, el diagnóstico de esa alerta se pierde (no se reintenta).
   - Sin las recetas de la fase 4, la parte determinística del plan es solo la correlación (sin acciones).
+
+## Remediación asistida: Fase 3 (aprobación, ejecución y verificación)
+
+### Decisiones
+_2026-10-29 · decision_
+<!-- entrada {"id":121,"seccion":"Remediación asistida: Fase 3 (aprobación, ejecución y verificación)","titulo":"Decisiones","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":431,"tipo":"invariante","vigencia":"vigente","fecha":"2026-10-29","resumen":"Dashboard: solo 3 POST escriben (planes) y exigen Host, Origin, JSON y token; la base sigue en solo lectura","modulos":["dashboard","remediacion"],"archivos":["planes.py","web/api.py"],"prueba":"tests/test_planes.py::test_un_post_que_no_cumple_todo_no_llega_a_escribir"} -->
+- `POST /api/planes/{id}/aprobar|rechazar|deshacer` son los únicos que escriben. Exigen: Host local (421), `Origin` propio (403; también sin Origin o `null`), `Sec-Fetch-Site` same-origin si viene, `Content-Type: application/json` (415, obliga a la consulta previa entre orígenes) y `X-PC-Doctor-Token` igual al de `web_token` (403, comparación en tiempo constante).
+  - Cualquier otro método o ruta no GET sigue dando 405, aunque traiga un token válido.
+  - `web_token` vive en la carpeta de datos con permisos 600 (el hook de git ya lo bloquea). La página lo pide con `GET /api/token`, que rechaza consultas entre sitios; otro origen no puede leer la respuesta ni llegar por DNS rebinding (Host).
+  - `db.SOLO_LECTURA` sigue activo: `planes.aprobar/rechazar/deshacer` abren la base con `conectar(escribir=True)` solo dentro de esos endpoints.
+  **(invariante · prueba: tests/test_planes.py::test_un_post_que_no_cumple_todo_no_llega_a_escribir)**
+  <!-- item {"id":432,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Aprobar un plan es aplicarlo; cada acción se revalida y la primera que falla corta y escala","modulos":["remediacion"],"archivos":["planes.py"],"prueba":"tests/test_planes.py::test_aprobar_vuelve_a_validar_y_una_accion_manipulada_en_la_base_no_corre"} -->
+- `planes.aprobar` pasa `propuesto → aprobado → aplicado` con una transición atómica (`UPDATE ... WHERE estado='propuesto'`): dos clics o dos llamadas a la vez aplican una sola vez. Cada acción vuelve a pasar por `remediacion.aplicar(simular=False)`, así que una fila manipulada en la base no corre.
+  - Si una acción falla: `fallido` + escalado (aviso crítico con lo intentado y entrada abierta de tipo `error` en el changelog, solo con acciones y parámetros ya validados). `deshacer` revierte lo reversible en orden inverso y deja el plan como `rechazado`; lo irreversible (servicio, proceso) se informa.
+  - Sin acciones (solo diagnóstico) no hay nada que aprobar. `escalado` como estado queda para los cortes de la fase 5; por ahora el escalado se marca con `escalado_en`.
+  <!-- item {"id":433,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Verificación: alerta resuelta tras aplicar y efecto de cada acción cumplido, en N corridas (4)","modulos":["datos","remediacion"],"archivos":["collector.py","planes.py"],"prueba":"tests/test_planes.py::test_espera_las_corridas_configuradas_y_despues_falla_y_escala"} -->
+- `planes.verificar_pendientes` corre en el recolector antes del paso de diagnóstico. En cada corrida: alerta resuelta *después* de aplicar (una que se resolvió sola antes no cuenta; un hallazgo no visto otra vez) y `remediacion.verificar_efecto` de cada ejecución. Ambas → `verificado` y `resolver_changelog` de la observación del diagnóstico. Si se agotan `verificar_corridas` (config, 4 = 1 h) → `fallido` y escalado.
+  - Consecuencia conocida: las limpiezas mueven a cuarentena en el mismo disco, así que contra una alerta de espacio libre el efecto se cumple pero la alerta no se resuelve: el plan termina `fallido` y escalado, con el motivo a la vista.
+  <!-- item {"id":434,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"El aviso del plan es una segunda notificación con «Ver el plan», sin botón de aplicar","modulos":["alertas","remediacion"],"archivos":["alertas.py","dashboard.py","planes.py","plataforma/windows_notificaciones.py"],"prueba":"tests/test_planes.py::test_el_aviso_del_plan_tiene_hipotesis_resumida_y_boton_ver_el_plan_sin_aplicar"} -->
+- El diagnóstico tarda (corre aparte), así que no cabe en el aviso de la alerta, que sale en cuanto salta: al terminar sale otro aviso con la alerta (dato de este código), la hipótesis resumida (110 caracteres, sin controles, rotulada «sin verificar»; sin modelo dice «plan sin redactar») y el botón «Ver el plan», que abre `/plan/N`.
+  - `dashboard.texto_boton(seccion)` decide el texto (Linux y Windows). Aprobar exige ver el plan completo en el dashboard.
+  <!-- item {"id":435,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Tools del MCP: diagnosticos/planes sin texto del modelo; aprobar/rechazar solo a pedido explícito","modulos":["mcp","remediacion"],"archivos":["reporte.py","server.py"],"prueba":"tests/test_planes.py::test_nada_fuera_de_los_puntos_de_entrada_llama_a_aprobar"} -->
+- `diagnosticos(dias)` y `planes(estado)` devuelven resumen sin hipótesis ni evidencia (para poder usarlas en el reporte semanal sin abrir un canal de texto del modelo). `detalle_plan(id)` trae el texto y su docstring lo declara no confiable. `aprobar_plan` y `rechazar_plan` dicen que solo se usan cuando el usuario lo pide de forma explícita, como los hechos conocidos.
+  - Las cinco están prohibidas por nombre al `claude -p`. Una prueba exige que solo `server.py` y `web/api.py` llamen a `planes.aprobar`. La tool de lista se registra como `planes` pero la función se llama `planes_tool` (el módulo `planes` la taparía).
+
+### Limitaciones
+_2026-10-29 · limitacion_
+<!-- entrada {"id":122,"seccion":"Remediación asistida: Fase 3 (aprobación, ejecución y verificación)","titulo":"Limitaciones","fecha":"2026-10-29","tipo":"limitacion"} -->
+
+<!-- item {"id":436,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"La sección «Diagnósticos y planes» compila pero no se probó en un navegador real","modulos":["dashboard","remediacion"],"archivos":["web/frontend/src/secciones/Planes.tsx"]} -->
+- Se compiló el frontend (`tsc` y `vite build`) y se probó toda la API, pero no se abrió el dashboard en un navegador: el flujo de clics (Ver el plan, Aplicar con confirmación, Rechazar, Deshacer) y el aspecto quedan por probar con un plan real.
+  - Hay que reiniciar el servicio `pc-doctor-web` para que sirva la versión nueva.

@@ -22,11 +22,11 @@ MENSAJES = {
 }
 
 
-def xml_toast(titulo: str, mensaje: str, url: str | None, critica: bool = False) -> str:
+def xml_toast(titulo: str, mensaje: str, url: str | None, critica: bool = False, texto_boton: str = TEXTO_BOTON) -> str:
     """XML de un toast. Con `url` el toast y su botón abren esa dirección (activación por protocolo)."""
     acciones = ""
     if url:
-        acciones = (f'<actions><action content={quoteattr(TEXTO_BOTON)} arguments={quoteattr(url)} activationType="protocol"/></actions>')
+        acciones = (f'<actions><action content={quoteattr(texto_boton)} arguments={quoteattr(url)} activationType="protocol"/></actions>')
     atributos = ""
     if url:
         atributos += f" launch={quoteattr(url)} activationType=\"protocol\""
@@ -66,15 +66,15 @@ def notificar(powershell, titulo: str, mensaje: str, critica: bool, seccion: str
     Con `seccion` ("alerta:4", "hallazgo:7", "reportes"...) ofrece el botón "Ver en el dashboard"; solo se aceptan secciones válidas
     y el botón se puede apagar con "boton_dashboard": false en config.json."""
     url = None
+    import dashboard  # import tardío: dashboard importa plataforma
     if seccion:
-        import dashboard  # import tardío: dashboard importa plataforma
         try:
             url = dashboard.url_de(seccion)
         except ValueError:
             log.warning("sección inválida para el botón: %r", seccion)
         if url and not forzar_boton and not boton_activo():
             url = None
-    if powershell(script_toast(xml_toast(titulo, mensaje, url, critica)), 20) is None:
+    if powershell(script_toast(xml_toast(titulo, mensaje, url, critica, dashboard.texto_boton(seccion) if seccion else TEXTO_BOTON)), 20) is None:
         log.warning("no pude mostrar la notificación")
         return False
     return True

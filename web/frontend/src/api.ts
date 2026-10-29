@@ -62,3 +62,34 @@ export function useApi<T>(ruta: string | null, tick = 0): Carga<T> {
 
   return estado
 }
+
+let tokenEnMemoria: string | null = null
+
+async function obtenerToken(renovar: boolean): Promise<string> {
+  if (tokenEnMemoria === null || renovar) tokenEnMemoria = (await pedir<{ token: string }>('/api/token')).token
+  return tokenEnMemoria
+}
+
+/**
+ * POST a un endpoint que escribe. Lleva el token local (se pide a la propia página, que es la única que puede leerlo); el navegador
+ * agrega el Origin. Si el token cambió (se regeneró el archivo), pide uno nuevo y reintenta una sola vez.
+ */
+export async function escribir<T>(ruta: string): Promise<T> {
+  for (let intento = 0; intento < 2; intento++) {
+    const r = await fetch(ruta, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-PC-Doctor-Token': await obtenerToken(intento > 0) },
+      body: '{}',
+    })
+    if (r.status === 403 && intento === 0) continue
+    let cuerpo: unknown = null
+    try {
+      cuerpo = await r.json()
+    } catch {
+      /* sin cuerpo JSON */
+    }
+    if (!r.ok) throw new ErrorApi(r.status, (cuerpo as { error?: string } | null)?.error ?? `Error ${r.status}`)
+    return cuerpo as T
+  }
+  throw new ErrorApi(403, 'token inválido')
+}

@@ -262,3 +262,15 @@ nav.secciones a:hover { background: var(--superficie-2); color: var(--texto); }
 .detalle-texto { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 6px; font-size: 14px; }
 .fila details { margin-top: 8px; }
 .fila summary { cursor: pointer; font-size: 14px; color: var(--texto-suave); }
+
+/* Diagnósticos y planes */
+.plan-detalle { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--borde); }
+.plan-detalle .subtitulo { font-size: 14px; margin: 14px 0 6px; }
+.plan-texto { overflow-wrap: anywhere; }
+.plan-lista, .plan-acciones { margin: 4px 0 0 20px; display: grid; gap: 6px; overflow-wrap: anywhere; }
+.plan-simulacion { display: flex; gap: 6px; align-items: flex-start; margin-top: 4px; font-size: 14px; color: var(--info); }
+.plan-simulacion svg { flex: none; margin-top: 3px; }
+.plan-botones { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.plan-confirmacion { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px 12px; border: 1px solid var(--aviso); border-radius: var(--radio); background: var(--aviso-fondo); }
+.plan-confirmacion p { flex-basis: 100%; }
+.boton:disabled { opacity: 0.55; cursor: progress; }

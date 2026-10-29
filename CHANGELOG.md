@@ -31,6 +31,27 @@ _Energía, Red expuesta, Sensores extra, Node.js: declarados a mano (`registrar_
 
 ## Entradas
 
+### 2026-10-29 — Diagnóstico automático #2
+<!-- changelog {"id":24,"fecha":"2026-10-29","tipo":"observacion","componente":"disco","titulo":"Diagnóstico automático #2","estado":"abierto","resuelto_en":null} -->
+- **Tipo:** observación
+- **Componente:** disco
+- **Detalle:** Diagnóstico automático #2 (redactado por el modelo), disparado por `smart`. Alerta: `smart_incorregibles:sdb/sectores_incorregibles`. Confianza: media. Plan #3: 0 acción(es) propuesta(s), 6 paso(s) manual(es). Hipótesis y evidencia: en el dashboard.
+- **Estado:** abierto
+
+### 2026-10-29 — Diagnóstico automático #1
+<!-- changelog {"id":23,"fecha":"2026-10-29","tipo":"observacion","componente":"disco","titulo":"Diagnóstico automático #1","estado":"abierto","resuelto_en":null} -->
+- **Tipo:** observación
+- **Componente:** disco
+- **Detalle:** Diagnóstico automático #1 (redactado por el modelo), disparado por `smart`. Alerta: `smart_pendientes:sdb/sectores_pendientes`. Confianza: media. Plan #2: 0 acción(es) propuesta(s), 6 paso(s) manual(es). Hipótesis y evidencia: en el dashboard.
+- **Estado:** abierto
+
+### 2026-10-29 — Diagnóstico automático #3
+<!-- changelog {"id":22,"fecha":"2026-10-29","tipo":"observacion","componente":"disco","titulo":"Diagnóstico automático #3","estado":"abierto","resuelto_en":null} -->
+- **Tipo:** observación
+- **Componente:** disco
+- **Detalle:** Diagnóstico automático #3 (redactado por el modelo), disparado por `smart`. Alerta: `smart_crc:sdb/errores_crc`. Confianza: media. Plan #1: 0 acción(es) propuesta(s), 6 paso(s) manual(es). Hipótesis y evidencia: en el dashboard.
+- **Estado:** abierto
+
 ### 2026-10-28 — Suite de pruebas permanente y dos errores corregidos
 <!-- changelog {"id":21,"fecha":"2026-10-28","tipo":"solucion","componente":"pc-doctor (pruebas)","titulo":"Suite de pruebas permanente y dos errores corregidos","estado":"resuelto","resuelto_en":"2026-10-28"} -->
 - **Tipo:** solución

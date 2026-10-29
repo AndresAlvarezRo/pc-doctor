@@ -30,7 +30,7 @@ from db import log
 
 DISPARADORES = ("critica_nueva", "empeoro", "malicioso", "smart")
 CONFIG_BASE = {"usar_modelo": True, "modelo": "sonnet", "max_turns": 20, "timeout_s": 300, "max_diagnosticos_dia": 3,
-               "disparadores": list(DISPARADORES), "claude": ""}
+               "disparadores": list(DISPARADORES), "claude": "", "verificar_corridas": 4}
 CONFIANZAS = ("baja", "media", "alta")
 MAX_ACCIONES, MAX_EVIDENCIA, MAX_PASOS, MAX_CAUSAS = 5, 8, 6, 8
 VENCE_S = 3600     # un diagnóstico pendiente o en curso por más de esto se da por fallido
@@ -342,6 +342,7 @@ def diagnosticar(diag_id: int, pedir=None) -> dict:
                          json.dumps(plan["sospechoso"], ensure_ascii=False), round(seg, 1), motivo if modo != "modelo" else None, diag_id))
             con.commit()
             _anotar_changelog(con, d, modo, plan, pid)
+            _avisar(con, pid)
             return {"id": diag_id, "plan_id": pid, "modo": modo, "acciones": len(plan["acciones"])}
         except Exception as e:   # un diagnóstico roto no puede dejar la fila en curso
             log.exception("falló el diagnóstico #%s", diag_id)
@@ -366,6 +367,14 @@ def _guardar_plan(con, diag_id: int, plan: dict, descartes: list[str], redactado
                 (js(plan["acciones"]), js(plan["pasos_manuales"]), plan["como_verificar"], js(descartes), int(redactado), pid))
     con.commit()
     return pid
+
+
+def _avisar(con, plan_id: int) -> None:
+    try:
+        import planes   # import tardío: planes importa este módulo
+        planes.avisar_plan(con, plan_id)
+    except Exception as e:   # el aviso es un extra: el diagnóstico ya está guardado
+        log.warning("no pude avisar del plan: %s", e)
 
 
 def _anotar_changelog(con, d, modo: str, plan: dict, plan_id: int) -> None:

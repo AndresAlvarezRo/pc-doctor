@@ -121,7 +121,12 @@ CREATE TABLE IF NOT EXISTS planes (
     descartes TEXT NOT NULL DEFAULT '[]',       -- JSON: lo que se descartó de la respuesta del modelo y por qué
     redactado INTEGER NOT NULL DEFAULT 0,       -- 1 si lo redactó el modelo
     estado TEXT NOT NULL DEFAULT 'propuesto' CHECK (estado IN
-        ('propuesto','aprobado','rechazado','aplicado','verificado','fallido','escalado'))
+        ('propuesto','aprobado','rechazado','aplicado','verificado','fallido','escalado')),
+    aprobado_en INTEGER, aplicado_en INTEGER, verificado_en INTEGER, escalado_en INTEGER,
+    origen TEXT,               -- quién aprobó o rechazó: dashboard o claude
+    ejecuciones TEXT NOT NULL DEFAULT '[]',     -- JSON: ids de `ejecuciones` de este plan, en orden
+    corridas INTEGER NOT NULL DEFAULT 0,        -- corridas del recolector desde que se aplicó (para verificar)
+    resultado TEXT             -- texto de este código: cómo terminó
 );
 CREATE INDEX IF NOT EXISTS idx_planes_diag ON planes(diagnostico_id);
 CREATE TABLE IF NOT EXISTS cuarentena (
@@ -256,6 +261,12 @@ def _migrar(con: sqlite3.Connection) -> None:
     """Agrega columnas nuevas a bases creadas con un esquema anterior."""
     if "contexto" not in {r["name"] for r in con.execute("PRAGMA table_info(lecturas)")}:
         con.execute("ALTER TABLE lecturas ADD COLUMN contexto TEXT")
+    # `planes` nació sin las columnas de la fase 3 (aprobación, ejecución y verificación)
+    columnas = {r["name"] for r in con.execute("PRAGMA table_info(planes)")}
+    for nombre, tipo in (("aprobado_en", "INTEGER"), ("aplicado_en", "INTEGER"), ("verificado_en", "INTEGER"), ("escalado_en", "INTEGER"),
+                         ("origen", "TEXT"), ("ejecuciones", "TEXT NOT NULL DEFAULT '[]'"), ("corridas", "INTEGER NOT NULL DEFAULT 0"), ("resultado", "TEXT")):
+        if nombre not in columnas:
+            con.execute(f"ALTER TABLE planes ADD COLUMN {nombre} {tipo}")
 
 
 # El dashboard activa este modo: ninguna función de consulta puede escribir (SQLite lo rechaza). Las acciones que

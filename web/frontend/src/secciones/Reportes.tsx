@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { esNoDisponible, useApi } from '../api'
 import { Aviso, Contenido, Seccion } from '../comunes'
 import { IconoAviso, IconoNormal } from '../iconos'
-import { diaCompleto, fechaYHora } from '../formato'
+import { diaCompleto } from '../formato'
 import type { Reporte, ResumenReporte } from '../tipos'
 
 // Los reportes los redacta un modelo a partir de datos del equipo: se renderizan como texto, sin permitir HTML crudo
@@ -23,32 +23,6 @@ function Insignia({ r }: { r: ResumenReporte }) {
   )
 }
 
-function Diagnosticos({ tick }: { tick: number }) {
-  const carga = useApi<{ diagnosticos: { ts: number; resumen?: string; estado?: string }[] }>('/api/diagnosticos', tick)
-  return (
-    <>
-      <h3 className="subtitulo">Diagnósticos automáticos</h3>
-      <Contenido
-        carga={carga}
-        hijos={(d) =>
-          d.diagnosticos.length === 0 ? (
-            <Aviso>Todavía no se generó ningún diagnóstico.</Aviso>
-          ) : (
-            <ul className="filas">
-              {d.diagnosticos.map((x, i) => (
-                <li key={i} className="fila">
-                  <p className="fila-meta">{fechaYHora(x.ts * 1000)}</p>
-                  <p className="fila-mensaje">{x.resumen ?? 'Sin resumen'}</p>
-                </li>
-              ))}
-            </ul>
-          )
-        }
-      />
-    </>
-  )
-}
-
 export function Reportes({ tick }: { tick: number }) {
   const lista = useApi<{ reportes: ResumenReporte[] }>('/api/reportes?n=30', tick)
   const [fecha, setFecha] = useState<string | null>(null)
@@ -59,7 +33,7 @@ export function Reportes({ tick }: { tick: number }) {
   const detalle = useApi<Reporte>(fecha ? `/api/reportes/${encodeURIComponent(fecha)}` : null, 0)
 
   return (
-    <Seccion id="reportes" titulo="Reportes y diagnósticos" ayuda="Un reporte de salud por semana, los domingos a las 20:00. Si Claude no está disponible, se genera uno sin redactar con los mismos datos.">
+    <Seccion id="reportes" titulo="Reportes" ayuda="Un reporte de salud por semana, los domingos a las 20:00. Si Claude no está disponible, se genera uno sin redactar con los mismos datos.">
       <Contenido
         carga={lista}
         hijos={(l) =>
@@ -94,7 +68,6 @@ export function Reportes({ tick }: { tick: number }) {
           )
         }
       />
-      <Diagnosticos tick={tick} />
     </Seccion>
   )
 }

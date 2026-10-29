@@ -4,14 +4,18 @@ Reutiliza las mismas funciones que el servidor MCP (consultas.py, salud.py, corr
 tools muestran exactamente lo mismo. La base se abre en modo de solo lectura, así que ningún endpoint puede escribir.
 
 Seguridad: escucha solo en 127.0.0.1 y rechaza cualquier petición cuyo encabezado Host no sea localhost:PUERTO o
-127.0.0.1:PUERTO (así una página web externa no puede leer los datos por DNS rebinding). Solo acepta GET.
+127.0.0.1:PUERTO (así una página web externa no puede leer los datos por DNS rebinding). Acepta GET, y POST únicamente en los tres
+endpoints de planes (aprobar, rechazar, deshacer), que además exigen: Origin propio, Content-Type JSON (obliga a una consulta previa
+entre orígenes) y el token local de `web_token` (permisos 600) en el encabezado X-PC-Doctor-Token. La base se abre en escritura solo ahí.
 
 Arranque: `uv run uvicorn web.api:app --host 127.0.0.1 --port 8787` desde la carpeta del proyecto.
 """
 
+import hmac
 import mimetypes
 import os
 import re
+import secrets
 import sqlite3
 import sys
 import threading
@@ -25,6 +29,7 @@ if str(RAIZ) not in sys.path:
 
 import db  # noqa: E402
 import memoria  # noqa: E402
+import planes  # noqa: E402
 
 db.SOLO_LECTURA = True  # ninguna función de consulta puede escribir
 
@@ -47,6 +52,8 @@ CONTEXTOS = ("reposo", "carga", "juego")
 TIPOS_LINEA = {  # grupos de la línea de tiempo -> tipos de elemento
     "entorno": {"kernel", "driver_gpu", "paquete", "paquete_otros"}, "eventos": {"evento"}, "alertas": {"alerta"},
     "seguridad": {"hallazgo"}, "acciones": {"accion"}, "sesiones": {"sesion"}}
+ORIGENES = {f"http://localhost:{PUERTO}", f"http://127.0.0.1:{PUERTO}"}
+RUTAS_ESCRITURA = re.compile(r"/api/planes/(\d{1,9})/(aprobar|rechazar|deshacer)")
 CLAVES_SECRETAS = re.compile(r"key|token|secret|clave|password", re.I)
 
 app = FastAPI(title="pc-doctor", docs_url=None, redoc_url=None, openapi_url=None)
@@ -58,12 +65,46 @@ class NoDisponible(Exception):
     """La fuente de datos de esta sección todavía no existe (tabla ausente, sin base, sin datos)."""
 
 
+def token_local() -> str:
+    """El token de las acciones que escriben: vive en `web_token` (permisos 600, fuera del repo). Se crea la primera vez que se pide."""
+    ruta = db.DIR_DATOS / "web_token"
+    try:
+        t = ruta.read_text().strip()
+        if len(t) >= 32:
+            return t
+    except OSError:
+        pass
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    t = secrets.token_urlsafe(32)
+    fd = os.open(ruta, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(t + "\n")
+    os.chmod(ruta, 0o600)
+    return t
+
+
+def _verificar_escritura(request: Request) -> JSONResponse | None:
+    """Las condiciones para que un POST llegue a un endpoint que escribe. None si pasa; si no, la respuesta de rechazo."""
+    if request.headers.get("origin") not in ORIGENES or request.headers.get("sec-fetch-site", "same-origin") != "same-origin":
+        return JSONResponse({"error": "origen no permitido"}, status_code=403)
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+        return JSONResponse({"error": "el contenido debe ser application/json"}, status_code=415)
+    if not hmac.compare_digest(request.headers.get("x-pc-doctor-token", "").encode(), token_local().encode()):
+        return JSONResponse({"error": "token inválido"}, status_code=403)
+    return None
+
+
 @app.middleware("http")
 async def proteger(request: Request, call_next):
     if request.headers.get("host", "").lower() not in HOSTS_PERMITIDOS:
         return JSONResponse({"error": "host no permitido"}, status_code=421)
     if request.method != "GET":
-        return JSONResponse({"error": "método no permitido (esta API es de solo lectura)"}, status_code=405)
+        if request.method == "POST" and RUTAS_ESCRITURA.fullmatch(request.url.path):
+            rechazo = _verificar_escritura(request)
+            if rechazo is not None:
+                return rechazo
+        else:
+            return JSONResponse({"error": "método no permitido (solo se escribe con POST en los endpoints de planes)"}, status_code=405)
     resp = await call_next(request)
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "DENY"
@@ -275,6 +316,55 @@ def diagnosticos(dias: int = Query(30, ge=1, le=365)):
             raise NoDisponible("el diagnóstico automático aún no está implementado")
         filas = con.execute("SELECT * FROM diagnosticos WHERE ts >= ? ORDER BY ts DESC LIMIT 100", (db.ahora() - dias * 86400,)).fetchall()
         return {"diagnosticos": [dict(f) for f in filas]}
+
+
+@app.get("/api/token")
+def token(request: Request):
+    """El token para las acciones que escriben. Solo lo lee la propia página (otro origen no puede leer la respuesta ni, por el
+    Host, llegar hasta acá); un navegador marca las consultas entre sitios con Sec-Fetch-Site y se rechazan."""
+    if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none") or request.headers.get("origin", next(iter(ORIGENES))) not in ORIGENES:
+        raise HTTPException(403, "origen no permitido")
+    return {"token": token_local()}
+
+
+@app.get("/api/planes")
+def planes_lista(estado: str = "", dias: int = Query(30, ge=1, le=365)):
+    """Planes de remediación (sin el texto libre del modelo). Solo lectura."""
+    with conexion() as con:
+        return {"planes": planes.lista(con, estado, dias, 100)}
+
+
+@app.get("/api/planes/{plan_id}")
+def plan_detalle(plan_id: int):
+    """Un plan completo: hipótesis y evidencia (texto de un modelo, no confiable), acciones con su simulación y lo ejecutado."""
+    with conexion() as con:
+        p = planes.detalle(con, plan_id)
+    if not p:
+        raise HTTPException(404, "no existe ese plan")
+    return p
+
+
+def _accion_de_plan(nombre: str, plan_id: int):
+    r = getattr(planes, nombre)(plan_id, "dashboard") if nombre != "aprobar" else planes.aprobar(plan_id, "dashboard")
+    if not r.get("ok") and "error" in r:
+        return JSONResponse(r, status_code=404 if "No existe" in r["error"] else 409)
+    return r
+
+
+@app.post("/api/planes/{plan_id}/aprobar")
+def plan_aprobar(plan_id: int):
+    """Aprueba y aplica el plan (cada acción se vuelve a validar antes de correr)."""
+    return _accion_de_plan("aprobar", plan_id)
+
+
+@app.post("/api/planes/{plan_id}/rechazar")
+def plan_rechazar(plan_id: int):
+    return _accion_de_plan("rechazar", plan_id)
+
+
+@app.post("/api/planes/{plan_id}/deshacer")
+def plan_deshacer(plan_id: int):
+    return _accion_de_plan("deshacer", plan_id)
 
 
 @app.get("/api/hechos")

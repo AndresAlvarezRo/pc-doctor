@@ -2,7 +2,7 @@
 
 Lo usan el lanzador del menú, los botones de las notificaciones y la tool `abrir_dashboard` del MCP.
 Uso: `uv run dashboard.py abrir [seccion]`. Secciones: estado, alertas, linea-de-tiempo, reportes, limitaciones, entorno,
-`alerta:N`, `hallazgo:N`, `componente:TIPO` o `componente:TIPO:ID`.
+`alerta:N`, `hallazgo:N`, `plan:N`, `componente:TIPO` o `componente:TIPO:ID`.
 """
 
 import logging
@@ -26,6 +26,14 @@ COMPONENTES = ("cpu", "gpu", "ram", "disco", "ventiladores", "voltajes", "placa"
 ESPERA_ARRANQUE_S = 15
 
 
+TEXTO_BOTON = "Ver en el dashboard"
+
+
+def texto_boton(seccion: str | None) -> str:
+    """El texto del botón de una notificación: «Ver el plan» para un plan, «Ver en el dashboard» para el resto."""
+    return "Ver el plan" if (seccion or "").strip().lower().startswith("plan") else TEXTO_BOTON
+
+
 def url_de(seccion: str = "") -> str:
     """URL completa de una sección. Solo se aceptan las formas conocidas (nunca una URL arbitraria)."""
     s = (seccion or "").strip().lower().replace("_", "-")
@@ -35,7 +43,7 @@ def url_de(seccion: str = "") -> str:
         return f"{BASE}/#{s}"
     if s == "linea de tiempo":
         return f"{BASE}/#linea-de-tiempo"
-    m = re.fullmatch(r"(alerta|hallazgo)[:/ ](\d{1,9})", s)
+    m = re.fullmatch(r"(alerta|hallazgo|plan)[:/ ](\d{1,9})", s)
     if m:
         return f"{BASE}/{m[1]}/{m[2]}"
     m = re.fullmatch(r"componente[:/ ](" + "|".join(COMPONENTES) + r")(?:[:/ ]([a-z0-9._-]{1,40}))?", s)

@@ -8,6 +8,7 @@ import { Entorno } from './secciones/Entorno'
 import { Changelog, HechosConocidos } from './secciones/Memoria'
 import { LineaDeTiempo } from './secciones/LineaDeTiempo'
 import { Limitaciones } from './secciones/Limitaciones'
+import { Planes } from './secciones/Planes'
 import { Tarjetas } from './secciones/Tarjetas'
 import { Seccion, SinConexion } from './comunes'
 
@@ -47,8 +48,12 @@ export default function App() {
   const abrirTarjeta = (t: Tarjeta) => ir(`/componente/${encodeURIComponent(t.tipo)}?id=${encodeURIComponent(t.id)}`)
   const alertaAbierta = ruta.vista === 'alerta' ? ruta.id : null
   const hallazgoAbierto = ruta.vista === 'hallazgo' ? ruta.id : null
+  const planAbierto = ruta.vista === 'plan' ? ruta.id : null
 
   // Un enlace directo a una alerta baja hasta su sección una vez cargada la página.
+  useEffect(() => {
+    if (planAbierto) window.setTimeout(() => document.getElementById('diagnosticos')?.scrollIntoView({ behavior: 'smooth' }), 300)
+  }, [planAbierto])
   useEffect(() => {
     if (alertaAbierta || hallazgoAbierto) window.setTimeout(() => document.getElementById('alertas')?.scrollIntoView({ behavior: 'smooth' }), 300)
   }, [alertaAbierta, hallazgoAbierto])
@@ -76,6 +81,7 @@ export default function App() {
               <a href="#alertas">Alertas y hallazgos</a>
               <a href="#linea-de-tiempo">Línea de tiempo</a>
               <a href="#reportes">Reportes</a>
+              <a href="#diagnosticos">Diagnósticos y planes</a>
               <a href="#hechos-conocidos">Hechos conocidos</a>
               <a href="#changelog">Changelog</a>
               <a href="#limitaciones">Limitaciones</a>
@@ -88,6 +94,7 @@ export default function App() {
               <Alertas tick={tick} abrirAlerta={alertaAbierta} abrirHallazgo={hallazgoAbierto} />
               <LineaDeTiempo tick={tick} alAbrirAlerta={(id) => ir(`/alerta/${id}`)} />
               <Suspense fallback={<Cargando />}><Reportes tick={tick} /></Suspense>
+              <Planes tick={tick} abrirPlan={planAbierto} alCambiar={actualizar} />
               <HechosConocidos tick={tick} />
               <Changelog tick={tick} />
               <Limitaciones tick={tick} />

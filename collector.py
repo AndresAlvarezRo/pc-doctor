@@ -16,6 +16,7 @@ import actividad
 import db
 import diagnostico
 import linea_base
+import planes
 import plataforma
 import salud
 import seguridad
@@ -387,6 +388,10 @@ def main() -> int:
         con.commit()
         log.info("%s: %s", nombre, r)
         resultados[nombre] = r
+    # ¿funcionaron los planes aplicados? (alerta resuelta y efecto cumplido en las próximas corridas)
+    r = paso("verificacion", planes.verificar_pendientes, con)
+    con.commit()
+    log.info("verificacion: %s", r)
     # el diagnóstico de alertas va al final y no espera: lanza el trabajo aparte y sigue
     r = paso("diagnostico", diagnostico.disparar, con, (resultados.get("salud") or {}).get("empeoradas", []))
     con.commit()

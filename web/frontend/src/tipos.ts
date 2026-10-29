@@ -295,3 +295,50 @@ export interface RespuestaEntorno {
     error?: string
   }
 }
+
+export interface ResumenPlan {
+  id: number
+  diagnostico_id: number
+  ts: number
+  estado: 'propuesto' | 'aprobado' | 'rechazado' | 'aplicado' | 'verificado' | 'fallido' | 'escalado'
+  firma: string
+  componente: string | null
+  disparador: string
+  modo: 'modelo' | 'sin_redactar' | null
+  confianza: 'baja' | 'media' | 'alta' | null
+  acciones: string[]
+  pasos_manuales_n: number
+  resultado: string | null
+  corridas: number
+  aplicado_en: number | null
+}
+
+export interface AccionPlan {
+  accion: string
+  parametros: Record<string, string | number>
+  porque: string
+  simulacion: string
+}
+
+export interface EjecucionPlan {
+  id: number
+  accion: string
+  parametros: Record<string, string | number>
+  estado: 'aplicada' | 'fallida' | 'rechazada'
+  resumen: string | null
+  reversible: boolean
+  deshecha_en: number | null
+}
+
+export interface DetallePlan extends Omit<ResumenPlan, 'acciones'> {
+  hipotesis: string | null
+  evidencia: { referencia: string; dato: string }[]
+  sospechoso: string[]
+  acciones: AccionPlan[]
+  pasos_manuales: string[]
+  como_verificar: string | null
+  descartes: string[]
+  motivo: string | null
+  duracion_s: number | null
+  ejecuciones: EjecucionPlan[]
+}

@@ -30,10 +30,10 @@ def _entorno() -> dict:
     return entorno
 
 
-def _comando(titulo: str, mensaje: str, critica: bool, con_boton: bool = False) -> list[str]:
+def _comando(titulo: str, mensaje: str, critica: bool, con_boton: bool = False, seccion: str | None = None) -> list[str]:
     cmd = ["notify-send", "-a", "pc-doctor", "-u", "critical" if critica else "normal", "-i", "dialog-warning"]
     if con_boton:
-        cmd.append(f"--action=ver={TEXTO_BOTON}")  # implica esperar la respuesta; imprime "ver" si se hace clic
+        cmd.append(f"--action=ver={dashboard.texto_boton(seccion)}")  # implica esperar la respuesta; imprime "ver" si se hace clic
     return cmd + [titulo, mensaje]
 
 
@@ -109,7 +109,7 @@ def _notificar_linux(titulo: str, mensaje: str, critica: bool = False, seccion: 
 def esperar_accion(titulo: str, mensaje: str, critica: bool, seccion: str) -> int:
     """Corre dentro de la unidad transitoria: muestra la notificación con botón y, si se hace clic, abre el dashboard."""
     try:
-        r = subprocess.run(_comando(titulo, mensaje, critica, con_boton=True), capture_output=True, text=True,
+        r = subprocess.run(_comando(titulo, mensaje, critica, con_boton=True, seccion=seccion), capture_output=True, text=True,
                            timeout=VIDA_ESCUCHA_S, env=_entorno())
     except (OSError, subprocess.TimeoutExpired) as e:
         log.warning("escucha de la notificación terminó: %s", e)

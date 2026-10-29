@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
-// Enrutado mínimo con la API de historial: /, /componente/:tipo?id=&sensor=, /alerta/:id y /hallazgo/:id.
+// Enrutado mínimo con la API de historial: /, /componente/:tipo?id=&sensor=, /alerta/:id, /hallazgo/:id y /plan/:id.
 // El servidor devuelve la misma página para esas rutas, así que los enlaces directos funcionan.
 
 export type Ruta =
@@ -8,6 +8,7 @@ export type Ruta =
   | { vista: 'componente'; tipo: string; id: string | null; sensor: string | null }
   | { vista: 'alerta'; id: string }
   | { vista: 'hallazgo'; id: string }
+  | { vista: 'plan'; id: string }
 
 export function leerRuta(): Ruta {
   const partes = window.location.pathname.split('/').filter(Boolean)
@@ -15,6 +16,7 @@ export function leerRuta(): Ruta {
   if (partes[0] === 'componente' && partes[1]) return { vista: 'componente', tipo: partes[1], id: q.get('id'), sensor: q.get('sensor') }
   if (partes[0] === 'alerta' && partes[1]) return { vista: 'alerta', id: partes[1] }
   if (partes[0] === 'hallazgo' && partes[1]) return { vista: 'hallazgo', id: partes[1] }
+  if (partes[0] === 'plan' && partes[1]) return { vista: 'plan', id: partes[1] }
   return { vista: 'inicio' }
 }
 
