@@ -112,9 +112,9 @@ def paquetes_registro(entradas: list[dict]) -> list[tuple[str, str, str]]:
     return sorted(res)
 
 
-def paquetes_winget(salida: str | None) -> list[tuple[str, str, str]]:
-    """Filas de `winget list` que tienen fuente (winget o msstore): complementan al registro con el Id estable y las apps de la Tienda.
-    Las que no tienen fuente ya están en el registro. Las columnas se ubican por la posición de sus títulos."""
+def tabla_winget(salida: str | None) -> list[dict]:
+    """Filas de una tabla de winget como {'Name','Id','Version','Available','Source'} (los títulos en español se traducen). Las columnas se
+    ubican por la posición de sus títulos; sin tabla reconocible, vacío."""
     if not salida:
         return []
     lineas = [re.sub(r"[\x08\r]", "", l).rstrip() for l in salida.splitlines()]
@@ -124,26 +124,24 @@ def paquetes_winget(salida: str | None) -> list[tuple[str, str, str]]:
             break
     else:
         return []
-    cols = [(n, cab.find(n)) for n in ("Name", "Id", "Version", "Available", "Source") if cab.find(n) >= 0] \
-        or [(n, cab.find(n)) for n in ("Nombre", "Id", "Versión", "Disponible", "Origen") if cab.find(n) >= 0]
-    if len(cols) < 3 or cols[-1][0] not in ("Source", "Origen"):
+    titulos = {"Name": "Name", "Nombre": "Name", "Id": "Id", "Version": "Version", "Versión": "Version", "Available": "Available",
+               "Disponible": "Available", "Source": "Source", "Origen": "Source", "Fuente": "Source"}
+    cols = sorted({titulos[t]: cab.find(t) for t in titulos if re.search(rf"(?<!\S){t}(?!\S)", cab)}.items(), key=lambda c: c[1])
+    if len(cols) < 3 or "Id" not in dict(cols):
         return []
     inicios = [p for _, p in cols] + [None]
     campos = {n: (inicios[k], inicios[k + 1]) for k, (n, _) in enumerate(cols)}
     res = []
     for l in lineas[lineas.index(cab) + 2:]:
-        if not l.strip():
-            continue
-        def c(*nombres):
-            for n in nombres:
-                if n in campos:
-                    a, b = campos[n]
-                    return l[a:b].strip()
-            return ""
-        fuente, ident, ver = c("Source", "Origen"), c("Id"), c("Version", "Versión")
-        if fuente and ident:
-            res.append((ident, ver, "winget"))
-    return sorted(set(res))
+        if l.strip():
+            res.append({n: l[a:b].strip() for n, (a, b) in campos.items()})
+    return [r for r in res if r.get("Id")]
+
+
+def paquetes_winget(salida: str | None) -> list[tuple[str, str, str]]:
+    """Filas de `winget list` que tienen fuente (winget o msstore): complementan al registro con el Id estable y las apps de la Tienda.
+    Las que no tienen fuente ya están en el registro."""
+    return sorted({(f["Id"], f.get("Version", ""), "winget") for f in tabla_winget(salida) if f.get("Source")})
 
 
 # ---------- eventos ----------
@@ -206,6 +204,18 @@ PATRONES_EVENTO = [(i, c, s, t, re.compile(p)) for i, c, s, t, p in PATRONES_EVE
 LIMITACIONES = [
     {"tema": "Rootkits y procesos de otros usuarios", "que": "No se detectan",
      "por_que": "El escaneo de seguridad corre sin permisos de administrador. No es un antivirus: un resultado limpio no garantiza un equipo limpio."},
+    {"tema": "Keyloggers por ganchos de teclado", "que": "No se pueden detectar",
+     "por_que": "Windows no permite listar los ganchos de teclado (SetWindowsHookEx) sin un driver. Solo se detectan por nombre conocido, por estar sin firma "
+               "digital en una carpeta del usuario con arranque propio o conexiones salientes, o por conexiones sostenidas sin ventana."},
+    {"tema": "Cifrado, Secure Boot y exclusiones de Defender", "que": "No se revisan",
+     "por_que": "BitLocker, Secure Boot y las exclusiones de Defender solo se leen como administrador (ayudante opcional). Las suscripciones WMI "
+               "de arranque también pueden pedirlo: si no se pueden leer, no se informan."},
+    {"tema": "SMBv1 y fin de soporte de Windows", "que": "SMBv1 solo se detecta si está activado de forma explícita; el fin de soporte usa una tabla propia",
+     "por_que": "Sin administrador no se puede preguntar por la característica de Windows. La tabla de fechas es de las ediciones Home y Pro y hay que actualizarla a mano."},
+    {"tema": "Catálogo KEV de CISA", "que": "Opcional (\"kev\": true en config.json) y solo da coincidencias por nombre",
+     "por_que": "No se compara la versión instalada, así que un programa que aparece es algo para revisar y no una prueba de que esté vulnerable."},
+    {"tema": "Pools de minería", "que": "Se reconocen por los argumentos del proceso y por puertos y IP conocidas, no por el nombre del servidor",
+     "por_que": "Resolver los nombres de las conexiones obligaría a consultar al DNS por cada destino del equipo."},
     {"tema": "Temperaturas, ventiladores y voltajes", "que": "Solo se miden con LibreHardwareMonitor abierto",
      "por_que": "Windows no expone los sensores de la placa, la CPU ni los discos sin un programa con driver propio. Sin él no se inventa ningún valor."},
     {"tema": "SMART de los discos", "que": "Sin administrador solo se lee el estado general (sano o con problemas)",

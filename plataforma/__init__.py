@@ -22,6 +22,7 @@ INTERFAZ = (
     "hardware", "paquetes", "temperatura_cpu", "carga", "leer_sensores", "nvidia_smi_aplica", "no_disponible",
     "limitaciones", "aviso_sin_temperatura", "eventos", "patrones_evento", "detectar_juegos", "notificar", "avisar",
     "abrir_url", "iniciar_dashboard", "mensaje_sin_servicio", "fecha_archivo",
+    "escanear_procesos", "escanear_extra", "describir_procesos", "consultar_txt",
 )
 
 _cache: dict = {}

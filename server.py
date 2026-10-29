@@ -368,7 +368,7 @@ def revision_seguridad() -> dict:
     con = db.conectar()
     try:
         seguridad.actualizar_listas(con)
-        res = seguridad.escanear()
+        res = seguridad.escanear(con)
         guardado = seguridad.guardar(con, res)
         rep = reputacion.consultar_sospechosos(con, res["hallazgos"])
         con.commit()

@@ -1404,3 +1404,76 @@ _2026-10-29 · nota_
 - **Seguridad:** `revisar_y_guardar` devuelve "omitido" en Windows hasta la fase 2.
   - **Reporte:** `reporte.py` usa `os.killpg`, `tmp.rename`, `~/.local/bin/claude` y un PATH con `:`; se porta con el instalador (fase 6).
   - **Reclasificar historial** (`actividad.nombres_de_proceso_de_juegos`) sigue siendo de Steam en Linux.
+
+## Windows: fase 2, seguridad
+
+### Categorías y reglas de seguridad en Windows
+_2026-10-29 · decision_
+<!-- entrada {"id":96,"seccion":"Windows: fase 2, seguridad","titulo":"Categorías y reglas de seguridad en Windows","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":402,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Suplantación = `fantasma`; categorías nuevas `persistencia`, `postura` y `vulnerabilidad`","modulos":["datos","seguridad","windows"],"archivos":["db.py","plataforma/windows_seguridad.py"],"prueba":"tests/test_windows_seguridad.py::test_si_windows_no_deja_leer_la_ruta_no_se_acusa_a_nadie"} -->
+- **Mismo esquema de hallazgos:** huellas con `seguridad._h`, deduplicación, estados y notificación de los `alta` nuevos.
+  - La suplantación de procesos del sistema (`svchost` fuera de `System32`, nombres parecidos, padres anómalos, `lsass` duplicado) usa `fantasma`: es lo que en Linux son los procesos que se hacen pasar por otra cosa.
+  - El `CHECK` de `hallazgos_seguridad.categoria` suma `persistencia`, `postura` y `vulnerabilidad` solo en bases nuevas; las de Linux ya creadas no los usan.
+  - Si Windows no deja leer la ruta de un proceso (los del sistema), no se lo acusa de nada.
+
+### Lecturas de seguridad sin depender del idioma
+_2026-10-29 · decision_
+<!-- entrada {"id":97,"seccion":"Windows: fase 2, seguridad","titulo":"Lecturas de seguridad sin depender del idioma","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":403,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Tareas programadas con `Get-ScheduledTask` y no con `schtasks /fo csv /v`: las columnas se traducen","modulos":["seguridad","windows"],"archivos":["plataforma/windows_lecturas_seguridad.py"],"prueba":"tests/test_windows_seguridad.py::test_los_servicios_y_tareas_de_microsoft_no_se_siguen"} -->
+- **Sin administrador y sin depender del idioma:** `schtasks /query /fo csv /v` devuelve los títulos de columna en el idioma del sistema; `Get-ScheduledTask` da objetos.
+  - Servicios por CIM (`Win32_Service`), carpetas de Inicio con `.lnk` resueltos por `WScript.Shell`, claves `Run`/`RunOnce`, `Winlogon`, IFEO y `AppInit_DLLs` por registro, suscripciones WMI por `root/subscription` (si piden administrador se informa en `no_disponible`).
+  - Los servicios y tareas de Microsoft (en la carpeta de Windows o con su firma) no se siguen.
+
+### Firmas digitales con caché por hash
+_2026-10-29 · decision_
+<!-- entrada {"id":98,"seccion":"Windows: fase 2, seguridad","titulo":"Firmas digitales con caché por hash","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":404,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Las firmas se verifican en lote, una vez por hash, y el hash se recalcula solo si cambia el archivo","modulos":["seguridad","windows"],"archivos":["plataforma/windows_lecturas_seguridad.py"],"prueba":"tests/test_windows_lecturas_seguridad.py::test_cada_ejecutable_se_verifica_una_sola_vez_por_hash"} -->
+- **Caché de dos niveles** en `firmas.cache.json` (carpeta de datos): `ruta|tamaño|fecha` → SHA-256 y SHA-256 → firma (30 días). Un archivo copiado a otra ruta reusa la firma.
+  - Una sola llamada a `Get-AuthenticodeSignature` por corrida con las rutas codificadas, hasta 60 archivos nuevos (el resto, en la siguiente). Un error de verificación no se guarda ni se toma por firma.
+  - Solo se verifican los candidatos: carpetas del usuario, uso alto, conexiones sin ventana y arranque. Lo que está en la carpeta de Windows se da por del sistema.
+
+### Estado del escaneo en la base
+_2026-10-29 · decision_
+<!-- entrada {"id":99,"seccion":"Windows: fase 2, seguridad","titulo":"Estado del escaneo en la base","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":405,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Tablas `persistencia` y `seguridad_estado` creadas solo en Windows; la primera corrida es la base del arranque","modulos":["datos","seguridad","windows"],"archivos":["plataforma/windows_lecturas_seguridad.py"],"prueba":"tests/test_windows_lecturas_seguridad.py::test_la_primera_corrida_es_la_base_y_despues_solo_se_avisa_de_lo_que_aparece"} -->
+- **Persistencia:** la primera corrida registra todo sin avisar de lo nuevo (pero sí de lo sospechoso por su contenido); después, algo que aparece se avisa una sola vez, con su firma.
+  - **Rachas:** el uso alto sin ventana ni juego necesita 4 corridas (~1 h) y la conexión saliente sin ventana, 3; una corrida solo suma si pasaron 10 min (una revisión manual no la infla).
+  - **Postura:** una vez por día (`postura_ultima`). Las tablas se crean con `CREATE TABLE IF NOT EXISTS` desde el código de Windows: `db.ESQUEMA` y las bases de Linux no cambian.
+
+### Reputación sin `dig`
+_2026-10-29 · decision_
+<!-- entrada {"id":100,"seccion":"Windows: fase 2, seguridad","titulo":"Reputación sin `dig`","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":406,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"`consultar_txt` en la plataforma: `dig` en Linux, `Resolve-DnsName` en Windows, con el nombre validado","modulos":["plataforma","seguridad","windows"],"archivos":["plataforma/windows_lecturas_seguridad.py","reputacion.py"],"prueba":"tests/test_windows_lecturas_seguridad.py::test_team_cymru_da_el_mismo_veredicto_con_dig_y_con_resolve_dnsname"} -->
+- **Team Cymru:** `reputacion._cymru` pide el TXT a la plataforma y da el mismo veredicto en las dos. En Windows el nombre debe ser exactamente `<40 hex>.hash.cymru.com` antes de ir dentro del script.
+  - **Privacidad:** igual que en Linux, solo el hash de hallazgos `alta` o `media` con ejecutable; ahora también los de `persistencia`. Los de postura no tienen ejecutable.
+  - **KEV de CISA:** opcional (`"kev": true`), solo se descarga el catálogo; la coincidencia es por nombre y se informa como "revisar".
+
+### Qué no detecta la seguridad de Windows
+_2026-10-29 · limitacion_
+<!-- entrada {"id":101,"seccion":"Windows: fase 2, seguridad","titulo":"Qué no detecta la seguridad de Windows","fecha":"2026-10-29","tipo":"limitacion"} -->
+
+<!-- item {"id":407,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"Sin ganchos de teclado, sin BitLocker/Secure Boot/exclusiones de Defender y sin pools por nombre de servidor","modulos":["seguridad","windows"],"archivos":["plataforma/windows_seguridad.py","plataforma/windows_sistema.py"]} -->
+- **Keyloggers:** Windows no deja enumerar los ganchos de teclado sin un driver; se detectan por nombre, por estar sin firma en una carpeta del usuario con arranque o conexiones salientes, o por conexiones sostenidas sin ventana.
+  - **Con administrador (ayudante, fase 3):** BitLocker, Secure Boot, exclusiones de Defender y, si lo piden, las suscripciones WMI.
+  - **SMBv1** solo si está activado de forma explícita; el **fin de soporte** usa una tabla propia de Home/Pro (`FIN_SOPORTE_HOME_PRO`) que hay que mantener a mano.
+  - **Pools:** se reconocen por argumentos, puertos e IP conocidas; resolver los nombres de las conexiones obligaría a consultar al DNS por cada destino.
+
+### Seguridad de Windows sin verificar en un Windows real
+_2026-10-29 · limitacion_
+<!-- entrada {"id":102,"seccion":"Windows: fase 2, seguridad","titulo":"Seguridad de Windows sin verificar en un Windows real","fecha":"2026-10-29","tipo":"limitacion"} -->
+
+<!-- item {"id":408,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"Reglas probadas con datos simulados; PowerShell, `ctypes`, `winreg` y el DNS no corrieron en Windows","modulos":["seguridad","windows"],"archivos":["plataforma/windows_lecturas_seguridad.py"]} -->
+- **No verificado:** `Get-MpComputerStatus`/`Get-MpThreatDetection` (pueden pedir administrador), `Get-StorageReliabilityCounter`, `Resolve-DnsName` y su manejo de NXDOMAIN, la enumeración de ventanas con `EnumWindows`, y el formato de `winget upgrade`.
+  - **Riesgo de falsos positivos:** programas sin firma en carpetas del usuario con arranque propio y servicios de terceros nuevos; el primer informe de un equipo real va a servir para ajustar.
+
+### Linux no cambió
+_2026-10-29 · prueba_
+<!-- entrada {"id":103,"seccion":"Windows: fase 2, seguridad","titulo":"Linux no cambió","fecha":"2026-10-29","tipo":"prueba"} -->
+
+<!-- item {"id":409,"tipo":"prueba","vigencia":"vigente","fecha":"2026-10-29","resumen":"El escaneo real de Linux dio los mismos hallazgos y escuchas antes y después de pasar por la plataforma","modulos":["plataforma","seguridad"],"archivos":["tests/test_seguridad.py"],"prueba":"tests/test_seguridad.py::test_el_escaneo_completo_suma_lo_extra_de_la_plataforma_y_ordena_por_severidad"} -->
+- **Foto antes/después** de `seguridad.escanear()` en esta PC (hallazgos con su huella y escuchas): idénticas. Como el módulo casi no tenía pruebas, se agregaron `tests/test_seguridad.py` (procesos, escuchas con IPv6 por `socket.AF_INET6`, orden por severidad, deduplicación) y las de `_cymru` con `dig` falso.

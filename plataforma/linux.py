@@ -6,6 +6,7 @@ reemplazan esas funciones sigan valiendo). Lo que dice cada función es el contr
 
 import os
 import platform
+import re
 import subprocess
 from pathlib import Path
 
@@ -170,3 +171,31 @@ def fecha_archivo(st) -> float:
     """Fecha con la que la cuarentena decide si un archivo es viejo: la mayor entre mtime y ctime, así un archivo recién
     descomprimido o copiado no cuenta como viejo."""
     return max(st.st_mtime, st.st_ctime)
+
+
+# ---------- seguridad y reputación ----------
+
+def escanear_procesos(con=None) -> tuple[list[dict], dict]:
+    """Hallazgos de los procesos y estadísticas {'procesos', 'sin_acceso'}. `con` se usa en Windows (rachas); acá no hace falta."""
+    import seguridad
+    return seguridad._escanear_procesos_linux()
+
+
+def escanear_extra(con=None) -> list[dict]:
+    """Hallazgos de otras fuentes (arranque y postura en Windows). En Linux no hay."""
+    return []
+
+
+def describir_procesos(pids) -> dict[int, str]:
+    """{pid: texto} que se suma al detalle de los puertos en escucha (en Windows, la firma digital del programa)."""
+    return {}
+
+
+def consultar_txt(nombre: str) -> tuple[str, list[str]] | None:
+    """Registro TXT de un nombre DNS con `dig`: (estado, textos entre comillas) o None si no se pudo consultar."""
+    import reputacion
+    salida = reputacion.ejecutar(["dig", "+time=5", "+tries=1", "TXT", nombre], timeout=12)
+    if salida is None:
+        return None
+    estado = re.search(r"status: (\w+)", salida)
+    return (estado.group(1) if estado else ""), re.findall(r'"([^"]*)"', salida)

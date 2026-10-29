@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 
 import db
+import plataforma
 from db import ejecutar, log
 
 RUTA_CONFIG = db.DIR_DATOS / "config.json"
@@ -22,7 +23,7 @@ CONFIG_BASE = {"consulta_online": True, "malwarebazaar_key": "", "notificaciones
 VIGENCIA_S = 7 * 86400          # un veredicto se reutiliza una semana antes de volver a consultar
 MAX_CONSULTAS_POR_CORRIDA = 3   # acota el tiempo del recolector; el resto queda para la próxima corrida
 MAX_BYTES_HASH = 512 * 1024 * 1024
-CATEGORIAS_CON_EXE = ("minero", "fantasma", "keylogger")
+CATEGORIAS_CON_EXE = ("minero", "fantasma", "keylogger", "persistencia")
 UA = {"User-Agent": "pc-doctor/0.1"}
 FIRMAN = ("malicioso", "sospechoso")
 
@@ -79,16 +80,17 @@ def _circl(sha256: str):
 
 
 def _cymru(sha1: str):
-    """Team Cymru Malware Hash Registry (DNS, sin clave): porcentaje de antivirus que lo detectan."""
-    salida = ejecutar(["dig", "+time=5", "+tries=1", "TXT", f"{sha1}.hash.cymru.com"], timeout=12)
-    if salida is None:
+    """Team Cymru Malware Hash Registry (DNS, sin clave): porcentaje de antivirus que lo detectan.
+    La consulta TXT la hace la plataforma (Linux: `dig`; Windows: Resolve-DnsName)."""
+    r = plataforma.actual().consultar_txt(f"{sha1}.hash.cymru.com")
+    if r is None:
         return None
-    estado = re.search(r"status: (\w+)", salida)
-    if not estado or estado.group(1) not in ("NOERROR", "NXDOMAIN"):
-        log.warning("Cymru devolvió %s", estado.group(1) if estado else "una respuesta ilegible")
+    estado, textos = r
+    if estado not in ("NOERROR", "NXDOMAIN"):
+        log.warning("Cymru devolvió %s", estado or "una respuesta ilegible")
         return None
-    m = re.search(r'"(\d+)\s+(\d+)"', salida)
-    if estado.group(1) == "NXDOMAIN" or not m:
+    m = next(filter(None, (re.fullmatch(r"(\d+)\s+(\d+)", t.strip()) for t in textos)), None)
+    if estado == "NXDOMAIN" or not m:
         return "sin_registro", None
     pct = int(m.group(2))
     return ("malicioso" if pct >= 50 else "sospechoso"), f"Detectado por {pct}% de los antivirus"

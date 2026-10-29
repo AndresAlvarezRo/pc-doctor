@@ -10,6 +10,7 @@ import hashlib
 import ipaddress
 import os
 import re
+import socket
 import time
 import urllib.request
 
@@ -134,8 +135,13 @@ def _en_ruta_sospechosa(exe: str) -> bool:
     return (exe.startswith(RUTAS_SOSPECHOSAS) and not exe.startswith(EXCEPCIONES_RUTA)) or exe.startswith("/memfd:")
 
 
-def escanear_procesos() -> tuple[list[dict], dict]:
-    """Revisa procesos: mineros, fantasmas y lectores de /dev/input. Devuelve (hallazgos, estadísticas)."""
+def escanear_procesos(con=None) -> tuple[list[dict], dict]:
+    """Revisa los procesos (cada sistema tiene sus reglas). Devuelve (hallazgos, estadísticas). `con` guarda las rachas en Windows."""
+    return plataforma.actual().escanear_procesos(con)
+
+
+def _escanear_procesos_linux() -> tuple[list[dict], dict]:
+    """Revisa procesos en Linux: mineros, fantasmas y lectores de /dev/input. Devuelve (hallazgos, estadísticas)."""
     hallazgos, revisados, sin_acceso = [], 0, 0
     nocoin = _leer_lista("nocoin_hosts")
     for p in psutil.process_iter(["pid", "name"]):
@@ -237,7 +243,7 @@ def conexiones() -> tuple[list[dict], list[dict]]:
     for c in socks:
         proto = "tcp" if c.type == 1 else "udp"
         if c.laddr and ((proto == "tcp" and c.status == psutil.CONN_LISTEN) or (proto == "udp" and not c.raddr)):
-            escuchas.append({"proto": proto + ("6" if c.family == 10 else ""), "direccion": c.laddr.ip,
+            escuchas.append({"proto": proto + ("6" if c.family == socket.AF_INET6 else ""), "direccion": c.laddr.ip,
                              "puerto": c.laddr.port, "pid": c.pid, "proceso": nombre_de(c.pid)})
         elif c.raddr and c.status == psutil.CONN_ESTABLISHED:
             establecidas.append({"remoto": c.raddr.ip, "puerto": c.raddr.port, "pid": c.pid, "proceso": nombre_de(c.pid)})
@@ -256,10 +262,12 @@ def escanear_red() -> tuple[list[dict], list[dict]]:
     escuchas, establecidas = conexiones()
     feodo = _leer_lista("feodo_ips")
     hallazgos = []
-    for e in escuchas:
-        if e["proto"].startswith("tcp") and not _es_loopback(e["direccion"]):
-            hallazgos.append(_h("red", "escucha_externa", "baja", e["proceso"], e["pid"], "",
-                                f"Escucha en {e['direccion']}:{e['puerto']} (accesible desde la red)", clave=f"{e['proto']}:{e['puerto']}"))
+    externas = [e for e in escuchas if e["proto"].startswith("tcp") and not _es_loopback(e["direccion"])]
+    quien = plataforma.actual().describir_procesos([e["pid"] for e in externas]) if externas else {}
+    for e in externas:
+        extra = f" [{quien[e['pid']]}]" if quien.get(e["pid"]) else ""
+        hallazgos.append(_h("red", "escucha_externa", "baja", e["proceso"], e["pid"], "",
+                            f"Escucha en {e['direccion']}:{e['puerto']} (accesible desde la red){extra}", clave=f"{e['proto']}:{e['puerto']}"))
     for c in establecidas:
         try:
             publica = ipaddress.ip_address(c["remoto"]).is_global
@@ -274,12 +282,14 @@ def escanear_red() -> tuple[list[dict], list[dict]]:
     return hallazgos, escuchas
 
 
-def escanear() -> dict:
-    """Escaneo completo en vivo. Devuelve hallazgos, escuchas y estadísticas (no escribe en la base)."""
-    h1, stats = escanear_procesos()
+def escanear(con=None) -> dict:
+    """Escaneo completo en vivo. Devuelve hallazgos, escuchas y estadísticas. No guarda hallazgos; con `con` en Windows recuerda rachas,
+    el arranque ya visto y cuándo fue la última revisión de postura."""
+    h1, stats = escanear_procesos(con)
     h2, escuchas = escanear_red()
+    h3 = plataforma.actual().escanear_extra(con)
     orden = {"alta": 0, "media": 1, "baja": 2}
-    hallazgos = sorted(h1 + h2, key=lambda h: orden[h["severidad"]])
+    hallazgos = sorted(h1 + h2 + h3, key=lambda h: orden[h["severidad"]])
     return {"hallazgos": hallazgos, "escuchas": escuchas, "stats": stats}
 
 
@@ -312,11 +322,9 @@ def guardar(con, resultado: dict) -> dict:
 
 def revisar_y_guardar(con) -> dict:
     """Paso del recolector: actualiza listas (máx. 1 vez al día), escanea y guarda."""
-    if plataforma.ES_WINDOWS:  # el escaneo mira /proc y /dev/input: el de Windows llega en la fase 2
-        return {"omitido": "el escaneo de seguridad de Windows todavía no está implementado"}
     inicio = db.ahora()
     listas = actualizar_listas(con)
-    res = escanear()
+    res = escanear(con)
     r = guardar(con, res)
     r["listas"] = listas
     r["reputacion"] = reputacion.consultar_sospechosos(con, res["hallazgos"])

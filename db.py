@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS metricas_diarias (
 CREATE TABLE IF NOT EXISTS hallazgos_seguridad (
     id INTEGER PRIMARY KEY,
     huella TEXT NOT NULL UNIQUE,  -- identifica el hallazgo sin depender del pid
-    categoria TEXT NOT NULL CHECK (categoria IN ('minero','fantasma','keylogger','red','lista_online')),
+    categoria TEXT NOT NULL CHECK (categoria IN ('minero','fantasma','keylogger','red','lista_online','persistencia','postura','vulnerabilidad')),
     regla TEXT NOT NULL,
     severidad TEXT NOT NULL CHECK (severidad IN ('alta','media','baja')),
     nombre TEXT, pid INTEGER, ruta_exe TEXT, detalle TEXT,

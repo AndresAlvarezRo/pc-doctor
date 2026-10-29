@@ -19,7 +19,7 @@ from pathlib import Path
 
 import psutil
 
-from . import windows_juegos, windows_notificaciones, windows_sensores, windows_sistema
+from . import windows_juegos, windows_lecturas_seguridad, windows_notificaciones, windows_sensores, windows_sistema
 from .comun import lista
 
 log = logging.getLogger("pc-doctor")
@@ -78,6 +78,17 @@ def _registro(raiz: str, ruta: str, nombre: str | None):
             return [winreg.EnumKey(clave, i) for i in range(winreg.QueryInfoKey(clave)[0])]
     except (ImportError, OSError):
         return None
+
+
+def _valores_registro(raiz: str, ruta: str) -> dict:
+    """{nombre: valor} de todos los valores de una clave del registro (raiz 'HKCU' o 'HKLM'); vacío si no existe."""
+    try:
+        import winreg
+        clave = winreg.OpenKey(getattr(winreg, f"HKEY_{'CURRENT_USER' if raiz == 'HKCU' else 'LOCAL_MACHINE'}"), ruta)
+        with clave:
+            return {n: v for n, v, _ in (winreg.EnumValue(clave, i) for i in range(winreg.QueryInfoKey(clave)[1]))}
+    except (ImportError, OSError):
+        return {}
 
 
 def _leer_uninstall() -> list[dict]:
@@ -242,7 +253,7 @@ def nvidia_smi_aplica(lecturas: list[dict]) -> bool:
 
 
 def no_disponible(lecturas: list[dict]) -> list[str]:
-    return windows_sensores.no_disponible(lecturas, _lecturas()[1] if "meta" in _cache else {})
+    return windows_sensores.no_disponible(lecturas, _lecturas()[1] if "meta" in _cache else {}) + windows_lecturas_seguridad.avisos_no_disponible()
 
 
 def limitaciones() -> list[dict]:
@@ -291,3 +302,22 @@ def iniciar_dashboard(espera_s: float) -> str:
 
 def mensaje_sin_servicio(estado: str) -> str:
     return windows_notificaciones.MENSAJES[estado]
+
+
+# ---------- seguridad y reputación ----------
+
+def escanear_procesos(con=None) -> tuple[list[dict], dict]:
+    return windows_lecturas_seguridad.escanear_procesos(con)
+
+
+def escanear_extra(con=None) -> list[dict]:
+    return windows_lecturas_seguridad.escanear_extra(con)
+
+
+def describir_procesos(pids) -> dict[int, str]:
+    return windows_lecturas_seguridad.describir_procesos(pids)
+
+
+def consultar_txt(nombre: str) -> tuple[str, list[str]] | None:
+    """Registro TXT de un nombre con Resolve-DnsName, sin `dig`: (estado, textos) o None si falló."""
+    return windows_lecturas_seguridad.consultar_txt(nombre, _json_ps)

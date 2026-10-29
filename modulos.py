@@ -12,7 +12,7 @@ RAIZ = Path(__file__).resolve().parent
 # módulo -> patrones de rutas relativas a la raíz del repo (`*` no cruza carpetas, `**` sí). El código y sus pruebas van juntos.
 MODULOS: dict[str, list[str]] = {
     "salud": ["salud.py", "linea_base.py", "tests/test_salud.py", "tests/test_smart.py", "tests/test_linea_base.py"],
-    "seguridad": ["seguridad.py", "reputacion.py"],
+    "seguridad": ["seguridad.py", "reputacion.py", "tests/test_seguridad.py"],
     "actividad": ["actividad.py", "tests/test_actividad.py"],
     "correlacion": ["correlacion.py", "tests/test_correlacion.py"],
     "reporte": ["reporte.py", "tests/test_reporte.py"],
