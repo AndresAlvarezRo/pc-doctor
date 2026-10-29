@@ -45,7 +45,8 @@ def test_la_bitacora_exportada_conserva_cada_linea_en_orden_y_agrega_fecha_y_tip
     assert md.startswith("# Bitácora de pc-doctor\n\n> Archivo **generado**") and "No se edita a mano" in md
     cuerpo = lambda t: [l.rstrip() for l in t.splitlines() if l.strip() and not re.match(r"^#{1,4} ", l)]
     original = [l for l in cuerpo(BITACORA) if not l.startswith("Texto del preámbulo")]
-    exportado = [l for l in cuerpo(md) if not re.match(r"^_\d{4}-\d{2}-\d{2} · \w+_$", l) and not l.startswith(("> Archivo", "Registro cronológico"))]
+    exportado = [l for l in cuerpo(md) if not re.match(r"^_\d{4}-\d{2}-\d{2} · \w+_$", l) and not l.startswith(("> Archivo", "Registro cronológico"))
+                 and not memoria.RX_COMENTARIO.match(l)]
     assert exportado == original
     assert "_2026-10-28 · decision_" in md and "_2026-10-28 · error_" in md
 
@@ -62,7 +63,9 @@ def test_una_entrada_nueva_aparece_con_su_fecha_y_tipo(con):
     sembrar(con)
     memoria.registrar_bitacora(con, "Nivel nuevo 3: otra cosa", "decision", "Usar tablas", "Usar tablas", "memoria", "Se decidió usar tablas.", fecha="2026-11-02")
     md = memoria.exportar_bitacora(con)
-    assert md.rstrip().endswith("## Nivel nuevo 3: otra cosa\n\n### Usar tablas\n_2026-11-02 · decision_\n\nSe decidió usar tablas.")
+    visible = "\n".join(l for l in md.rstrip().split("\n") if not memoria.RX_COMENTARIO.match(l))
+    assert visible.endswith("## Nivel nuevo 3: otra cosa\n\n### Usar tablas\n_2026-11-02 · decision_\n\nSe decidió usar tablas.")
+    assert md.rstrip().endswith("Se decidió usar tablas.") and '"fecha":"2026-11-02","tipo":"decision"' in md
 
 
 # ---------- changelog ----------

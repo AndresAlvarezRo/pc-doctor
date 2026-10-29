@@ -274,12 +274,7 @@ def copias_previas_items() -> list[Path]:
     return sorted(db.DIR_DATOS.glob("doctor.db.antes-de-items-*"))
 
 
-def unir_items(textos: list[str]) -> str:
-    """Lo contrario de `dividir_en_items`: pega las viñetas y separa los párrafos con una línea en blanco (como el exportador)."""
-    cuerpo = textos[0]
-    for t in textos[1:]:
-        cuerpo += ("\n" if memoria.es_continuacion(t) else "\n\n") + t
-    return cuerpo
+unir_items = memoria.unir_items       # lo contrario de dividir_en_items; el exportador usa el mismo
 
 
 def validar_items(con, propuesta: list[dict]) -> list[str]:

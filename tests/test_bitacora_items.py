@@ -353,7 +353,7 @@ def test_una_entrada_con_items_se_exporta_con_los_items_en_orden(con):
     reg(con, "primero", contenido="- Primero\n  - subpunto")
     reg(con, "párrafo", contenido="Un párrafo suelto.")
     reg(con, "tercero", contenido="- Tercero")
-    md = memoria.exportar_bitacora(con)
+    md = sin_comentarios(memoria.exportar_bitacora(con))
     assert md.rstrip().endswith("### Título\n_" + memoria.hoy() + " · nota_\n\n- Primero\n  - subpunto\n\nUn párrafo suelto.\n- Tercero")
 
 
@@ -381,6 +381,18 @@ def migrar_a_items(con, texto: str, tipos=None):
     return creados
 
 
+RX_MARCA = re.compile(r"^\s*(\*\*\(invariante( · prueba: .+)?\)\*\*|\(superada por #\d+: .+\))$")
+
+
+def crudo(md: str) -> str:
+    """El markdown sin lo que agrega el exportador a los ítems: los comentarios de metadatos y las marcas."""
+    return "\n".join(l for l in md.split("\n") if not memoria.RX_COMENTARIO.match(l) and not RX_MARCA.match(l))
+
+
+def sin_comentarios(md: str) -> str:
+    return "\n".join(l for l in md.split("\n") if not memoria.RX_COMENTARIO.match(l))
+
+
 def con_texto(md: str) -> list[str]:
     return [l for l in md.splitlines() if l.strip()]
 
@@ -396,13 +408,13 @@ def test_dividir_en_items_separa_viñetas_con_sus_subviñetas_y_parrafos():
 
 
 def test_exportar_los_items_migrados_conserva_el_bitacora_actual_linea_por_linea(con):
-    original = (RAIZ / "BITACORA.md").read_text(encoding="utf-8")
+    original = crudo((RAIZ / "BITACORA.md").read_text(encoding="utf-8"))
     migrar_a_items(con, original)
-    assert memoria.exportar_bitacora(con) == original            # igual, no solo las líneas con texto
+    assert crudo(memoria.exportar_bitacora(con)) == original      # igual, no solo las líneas con texto
 
 
 def test_las_marcas_son_lineas_nuevas_y_no_pierden_ni_reordenan_ninguna_linea_del_original(con):
-    original = (RAIZ / "BITACORA.md").read_text(encoding="utf-8")
+    original = crudo((RAIZ / "BITACORA.md").read_text(encoding="utf-8"))
     creados = migrar_a_items(con, original)
     for i in creados[::7]:
         con.execute("UPDATE bitacora_items SET tipo='invariante' WHERE id=?", (i,))
@@ -412,8 +424,8 @@ def test_las_marcas_son_lineas_nuevas_y_no_pierden_ni_reordenan_ninguna_linea_de
     exportado = con_texto(memoria.exportar_bitacora(con))
     base = con_texto(original)
     assert es_subsecuencia(base, exportado)
-    nuevas = [l for l in exportado if l not in set(base)]
-    assert nuevas and all(re.fullmatch(r"\s*(\*\*\(invariante( · prueba: .+)?\)\*\*|\(superada por #\d+: .+\))", l) for l in nuevas)
+    nuevas = [l for l in exportado if l not in set(base) and not memoria.RX_COMENTARIO.match(l)]
+    assert nuevas and all(RX_MARCA.match(l) for l in nuevas)
 
 
 def test_formato_de_las_marcas(con):
@@ -421,7 +433,7 @@ def test_formato_de_las_marcas(con):
     sin_prueba = reg(con, "Solo local", "invariante", contenido="- Solo en 127.0.0.1", titulo="A")
     viejo, nuevo = reg(con, "viejo", contenido="- sin instalar", titulo="A"), reg(con, "nuevo", contenido="Párrafo nuevo.", titulo="A")
     memoria.marcar_superada(con, viejo, nuevo, "ya se instaló")
-    cuerpo = memoria.exportar_bitacora(con).split("### A\n", 1)[1].split("\n\n", 1)[1]
+    cuerpo = sin_comentarios(memoria.exportar_bitacora(con)).split("### A\n", 1)[1].split("\n\n", 1)[1]
     assert cuerpo.rstrip() == ("- Nunca se borra nada.\n  - ni cuarentena\n  **(invariante · prueba: tests/test_cuarentena.py::test_nunca_borra)**\n"
                                "- Solo en 127.0.0.1\n  **(invariante)**\n"
                                f"- sin instalar\n  (superada por #{nuevo}: ya se instaló)\n\nPárrafo nuevo.")
@@ -431,14 +443,14 @@ def test_formato_de_las_marcas(con):
 def test_una_invariante_superada_lleva_las_dos_marcas(con):
     a, b = reg(con, "vieja regla", "invariante", contenido="- Regla vieja"), reg(con, "regla nueva", "invariante", contenido="- Regla nueva")
     memoria.marcar_superada(con, a, b, "el usuario la cambió")
-    md = memoria.exportar_bitacora(con)
+    md = sin_comentarios(memoria.exportar_bitacora(con))
     assert "- Regla vieja\n  **(invariante)**\n  (superada por #" + str(b) + ": el usuario la cambió)\n- Regla nueva\n  **(invariante)**" in md
 
 
 def test_el_markdown_marcado_sigue_siendo_valido_una_marca_no_abre_otro_item(con):
     reg(con, "inv", "invariante", contenido="- Regla")
     reg(con, "otra", "nota", contenido="- Otra")
-    lineas = memoria.exportar_bitacora(con).splitlines()
+    lineas = sin_comentarios(memoria.exportar_bitacora(con)).split("\n")
     marca = next(i for i, l in enumerate(lineas) if "(invariante)" in l)
     assert lineas[marca].startswith("  ") and lineas[marca - 1] == "- Regla" and lineas[marca + 1] == "- Otra"
 

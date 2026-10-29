@@ -499,6 +499,19 @@ def _modulo(valor: str) -> str:
     return v
 
 
+def _sin_encabezados(contenido: str) -> str:
+    """Un ítem es una viñeta o un párrafo: un encabezado suelto (`## x`) partiría la bitácora exportada al volver a importarla."""
+    en_codigo = False
+    for linea in contenido.split("\n"):
+        if linea.lstrip().startswith("```"):
+            en_codigo = not en_codigo
+        elif not en_codigo and RX_ENCABEZADO_MD.match(linea):
+            raise ValueError("`contenido` no puede tener encabezados (líneas que empiezan con #): es una viñeta o un párrafo.")
+        elif not en_codigo and RX_COMENTARIO.match(linea):
+            raise ValueError("`contenido` no puede tener líneas que parezcan un comentario de metadatos (<!-- item {...} -->).")
+    return contenido
+
+
 def _resumen(valor: str) -> str:
     v = _texto(valor, "resumen", MAX_RESUMEN)
     if "\n" in v:
@@ -523,7 +536,7 @@ def registrar_bitacora(con, seccion: str, tipo: str, titulo: str, resumen: str, 
     """Crea un ítem de la bitácora (y la entrada `seccion` / `titulo` si todavía no existe). Devuelve el id del ÍTEM."""
     seccion, titulo = _texto(seccion, "seccion", MAX_SECCION), _texto(titulo, "titulo", MAX_TITULO)
     tipo, resumen = _opcion(tipo, TIPOS_ITEM, "tipo"), _resumen(resumen)
-    contenido = _texto(contenido, "contenido", MAX_CONTENIDO)
+    contenido = _sin_encabezados(_texto(contenido, "contenido", MAX_CONTENIDO))
     lista_modulos = [_modulo(m) for m in _lista(modulos, "modulos", 40)]
     if not lista_modulos:
         raise ValueError(f"`modulos` no puede estar vacío. Los válidos son: {', '.join(mapa.MODULOS)}.")
@@ -767,23 +780,35 @@ def marcas_de_item(f) -> list[str]:
     return marcas
 
 
-def _cuerpo_de(con, entrada, con_items: bool) -> str:
-    """El texto de una entrada: sus ítems en orden o, si no tiene ítems, su `contenido`. Cada viñeta va pegada a lo anterior y un
-    párrafo, separado por una línea en blanco. Las marcas van en líneas aparte, después del ítem y sangradas si el ítem es una viñeta."""
-    items = con.execute("SELECT * FROM bitacora_items WHERE entrada_id=? ORDER BY orden", (entrada["id"],)).fetchall() if con_items else []
+def _cuerpo_de(con, entrada, items: list, modulos_de: dict, archivos_de: dict) -> str:
+    """El texto de una entrada: sus ítems en orden o, si no tiene ítems, su `contenido`. Cada ítem lleva antes su comentario de metadatos
+    (sangrado dentro de la viñeta anterior, para que la lista siga siendo una sola). Cada viñeta va pegada a la anterior y un párrafo,
+    separado por una línea en blanco. Las marcas van en líneas aparte, después del ítem y sangradas si el ítem es una viñeta."""
     if not items:
         return entrada["contenido"]
     cuerpo = ""
     for k, it in enumerate(items):
-        sangria = "  " if es_continuacion(it["contenido"]) else ""
-        bloque = "\n".join([it["contenido"]] + [sangria + m for m in marcas_de_item(it)])
-        cuerpo += (("\n" if es_continuacion(it["contenido"]) else "\n\n") if k else "") + bloque
+        pegado = es_continuacion(it["contenido"])
+        sangria = "  " if pegado else ""
+        bloque = "\n".join([(sangria if k else "") + comentario("item", _meta_item(it, modulos_de, archivos_de)), it["contenido"]]
+                           + [sangria + m for m in marcas_de_item(it)])
+        cuerpo += (("\n" if pegado else "\n\n") if k else "") + bloque
     return cuerpo
 
 
 def exportar_bitacora(con) -> str:
     """Markdown de la bitácora: una sección `##` por `seccion` (o `##` + `###` si trae ` / `) y un encabezado por entrada, con su fecha y tipo."""
     con_items = existe(con, "bitacora_items")
+    items_de: dict[int, list] = {}
+    modulos_de: dict[int, list] = {}
+    archivos_de: dict[int, list] = {}
+    if con_items:
+        for it in con.execute("SELECT * FROM bitacora_items ORDER BY entrada_id, orden"):
+            items_de.setdefault(it["entrada_id"], []).append(it)
+        for f in con.execute("SELECT item_id, modulo FROM bitacora_item_modulo ORDER BY modulo"):
+            modulos_de.setdefault(f["item_id"], []).append(f["modulo"])
+        for f in con.execute("SELECT item_id, ruta FROM bitacora_item_archivo ORDER BY ruta"):
+            archivos_de.setdefault(f["item_id"], []).append(f["ruta"])
     out = ["# Bitácora de pc-doctor", "", AVISO_GENERADO.format(tabla="bitacora", tool="registrar_bitacora"), "", INTRO_BITACORA]
     anterior: list[str] = []
     for f in con.execute("SELECT * FROM bitacora ORDER BY id"):
@@ -792,10 +817,12 @@ def exportar_bitacora(con) -> str:
             if anterior[:i + 1] != ruta[:i + 1]:
                 out += ["", f"{'#' * (i + 2)} {parte}"]
         anterior = ruta
+        meta = comentario("entrada", {"id": f["id"], "seccion": f["seccion"], "titulo": f["titulo"], "fecha": f["fecha"], "tipo": f["tipo"]})
+        cuerpo = _cuerpo_de(con, f, items_de.get(f["id"], []), modulos_de, archivos_de)
         if f["titulo"] == SECCION_INTRO:          # el texto que va antes de los subtítulos de la sección, sin encabezado propio
-            out += ["", _cuerpo_de(con, f, con_items)]
+            out += ["", meta, "", cuerpo]
             continue
-        out += ["", f"{'#' * (len(ruta) + 2)} {f['titulo']}", f"_{f['fecha']} · {f['tipo']}_", "", _cuerpo_de(con, f, con_items)]
+        out += ["", f"{'#' * (len(ruta) + 2)} {f['titulo']}", f"_{f['fecha']} · {f['tipo']}_", meta, "", cuerpo]
     return "\n".join(out) + "\n"
 
 
@@ -846,11 +873,14 @@ def exportar_changelog(con) -> str:
         ultima = max(f["actualizado"] for f in manuales)
         out += ["", f"_{', '.join(f['campo'] for f in manuales)}: declarados a mano (`registrar_identidad`), no calculados; "
                     f"última actualización: {db.iso(ultima)[:10]}._"]
+        out += [comentario("identidad_manual", {"campo": f["campo"], "valor": f["valor"], "actualizado": f["actualizado"]}) for f in manuales]
     out += ["", "## Entradas"]
     for f in con.execute("SELECT * FROM changelog ORDER BY id DESC"):
         titulo = f["titulo"] or corto(f["detalle"].split("\n")[0], 90)
         estado = "resuelto" + (f" ({f['resuelto_en']})" if f["resuelto_en"] else "") if f["estado"] == "resuelto" else "abierto"
-        out += ["", f"### {f['fecha']} — {titulo}", f"- **Tipo:** {TIPO_CHANGELOG_TEXTO[f['tipo']]}", f"- **Componente:** {f['componente']}",
+        meta = {"id": f["id"], "fecha": f["fecha"], "tipo": f["tipo"], "componente": f["componente"], "titulo": f["titulo"], "estado": f["estado"],
+                "resuelto_en": f["resuelto_en"]}
+        out += ["", f"### {f['fecha']} — {titulo}", comentario("changelog", meta), f"- **Tipo:** {TIPO_CHANGELOG_TEXTO[f['tipo']]}", f"- **Componente:** {f['componente']}",
                 f"- **Detalle:** {f['detalle']}", f"- **Estado:** {estado}"]
     return "\n".join(out) + "\n"
 
@@ -869,17 +899,235 @@ def exportar(con, destino: Path = RAIZ) -> dict:
     return res
 
 
-def main(argv: list[str]) -> int:
-    if "--exportar" not in argv:
-        print("Uso: uv run memoria.py --exportar [--destino CARPETA]   (regenera BITACORA.md y CHANGELOG.md desde la base)", file=sys.stderr)
+# ---------- el markdown como respaldo completo (metadatos en comentarios HTML e importación) ----------
+# Cada entrada, cada ítem, cada entrada del changelog y cada fila de identidad manual llevan un comentario HTML de una línea con sus
+# metadatos en JSON: GitHub no lo muestra, pero queda en el archivo, y `--importar` reconstruye las tablas leyendo solo esos comentarios y el
+# texto que cuelga de ellos. Lo que se ve (encabezados, fecha, tipo, marcas, tabla de identidad) es para leer; al importar no cuenta.
+
+RX_COMENTARIO = re.compile(r"^\s*<!-- (entrada|item|changelog|identidad_manual) (\{.*\}) -->\s*$")
+RX_ENCABEZADO_MD = re.compile(r"^#{2,6} ")
+_ESCAPES_JSON = (("--", "\\u002d\\u002d"), ("<", "\\u003c"), (">", "\\u003e"), (" ", "\\u2028"), (" ", "\\u2029"), ("\x85", "\\u0085"))
+TABLAS_BITACORA = ("bitacora_item_modulo", "bitacora_item_archivo", "bitacora_items", "bitacora")     # en orden de borrado
+TABLAS_CHANGELOG = ("changelog", "identidad_manual")
+
+
+def comentario(clave: str, datos: dict) -> str:
+    """Comentario HTML de una línea con `datos` en JSON. Se escapa lo que podría cerrarlo (`--`, `<`, `>`) o partir la línea."""
+    texto = json.dumps(datos, ensure_ascii=False, separators=(",", ":"))
+    for crudo, escapado in _ESCAPES_JSON:
+        texto = texto.replace(crudo, escapado)
+    return f"<!-- {clave} {texto} -->"
+
+
+def unir_items(textos: list[str]) -> str:
+    """Pega los ítems de una entrada: cada viñeta va pegada a la anterior y un párrafo, separado por una línea en blanco."""
+    cuerpo = textos[0]
+    for t in textos[1:]:
+        cuerpo += ("\n" if es_continuacion(t) else "\n\n") + t
+    return cuerpo
+
+
+def _meta_item(it, modulos_de: dict, archivos_de: dict) -> dict:
+    meta = {"id": it["id"], "tipo": it["tipo"], "vigencia": it["vigencia"], "fecha": it["fecha"], "resumen": it["resumen"],
+            "modulos": modulos_de.get(it["id"], [])}
+    if archivos_de.get(it["id"]):
+        meta["archivos"] = archivos_de[it["id"]]
+    for campo in ("prueba", "reemplazada_por", "motivo"):
+        if it[campo]:
+            meta[campo] = it[campo]
+    return meta
+
+
+def _leer_comentario(linea: str):
+    m = RX_COMENTARIO.match(linea)
+    if not m:
+        return None
+    try:
+        return m.group(1), json.loads(m.group(2))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Un comentario de metadatos no es JSON válido ({e}): {linea.strip()[:120]}") from None
+
+
+def _recortar(lineas: list[str]) -> list[str]:
+    ini, fin = 0, len(lineas)
+    while ini < fin and not lineas[ini].strip():
+        ini += 1
+    while fin > ini and not lineas[fin - 1].strip():
+        fin -= 1
+    return lineas[ini:fin]
+
+
+def leer_bitacora(texto: str) -> list[dict]:
+    """Entradas (con sus ítems) de un BITACORA.md exportado. Lee solo los comentarios de metadatos y el texto que sigue a cada uno; un
+    bloque termina en el comentario siguiente o en un encabezado (fuera de los bloques de código)."""
+    entradas: list[dict] = []
+    bloque, en_codigo = None, False       # bloque = (clave, meta, líneas)
+
+    def cerrar():
+        nonlocal bloque
+        if bloque is None:
+            return
+        clave, meta, lineas = bloque
+        bloque = None
+        lineas = _recortar(lineas)
+        if clave == "entrada":
+            meta["items"], meta["lineas"] = [], lineas
+            entradas.append(meta)
+            return
+        for marca in reversed(marcas_de_item({"tipo": meta["tipo"], "prueba": meta.get("prueba"), "vigencia": meta["vigencia"],
+                                              "reemplazada_por": meta.get("reemplazada_por"), "motivo": meta.get("motivo")})):
+            if not lineas or lineas[-1].strip() != marca:
+                raise ValueError(f"Al ítem #{meta['id']} le falta la marca `{marca}` que dicen sus metadatos.")
+            lineas = _recortar(lineas[:-1])
+        if not lineas:
+            raise ValueError(f"El ítem #{meta['id']} no tiene texto.")
+        meta["contenido"] = "\n".join(lineas)
+        entradas[-1]["items"].append(meta)
+
+    for linea in texto.split("\n"):
+        if bloque is not None and linea.lstrip().startswith("```"):
+            en_codigo = not en_codigo
+        if not en_codigo:
+            leido = _leer_comentario(linea)
+            if leido and leido[0] in ("entrada", "item"):
+                cerrar()
+                if leido[0] == "item" and not entradas:
+                    raise ValueError(f"El ítem #{leido[1].get('id')} aparece antes de cualquier entrada.")
+                bloque = (leido[0], leido[1], [])
+                continue
+            if RX_ENCABEZADO_MD.match(linea):
+                cerrar()
+                continue
+        if bloque is not None:
+            bloque[2].append(linea)
+    cerrar()
+    for e in entradas:
+        if e["items"]:
+            if e["lineas"]:
+                raise ValueError(f"La entrada #{e['id']} tiene texto fuera de sus ítems.")
+            e["contenido"] = unir_items([i["contenido"] for i in e["items"]])
+        else:
+            e["contenido"] = "\n".join(e["lineas"])
+    return entradas
+
+
+def leer_changelog(texto: str) -> tuple[list[dict], list[dict]]:
+    """(entradas del changelog, filas de identidad manual) de un CHANGELOG.md exportado. La identidad calculada no se importa."""
+    lineas = texto.split("\n")
+    marcas = [(i, *c) for i, l in enumerate(lineas) if (c := _leer_comentario(l))]
+    identidad_m = [meta for _, clave, meta in marcas if clave == "identidad_manual"]
+    cl = [(i, meta) for i, clave, meta in marcas if clave == "changelog"]
+    entradas = []
+    for k, (i, meta) in enumerate(cl):
+        fin = cl[k + 1][0] - 1 if k + 1 < len(cl) else len(lineas)          # la línea anterior al siguiente comentario es su encabezado
+        bloque = _recortar(lineas[i + 1:fin])
+        if "detalle" not in meta:
+            ini = next((j for j, l in enumerate(bloque) if l.startswith("- **Detalle:** ")), None)
+            fin_d = max((j for j, l in enumerate(bloque) if l.startswith("- **Estado:** ")), default=None)
+            if ini is None or fin_d is None or fin_d < ini:
+                raise ValueError(f"La entrada #{meta.get('id')} del changelog no tiene Detalle y Estado.")
+            meta["detalle"] = "\n".join([bloque[ini][len("- **Detalle:** "):]] + bloque[ini + 1:fin_d])
+        entradas.append(meta)
+    return entradas, identidad_m
+
+
+def importar(con, bitacora_md: str | None = None, changelog_md: str | None = None, reemplazar: bool = False) -> dict:
+    """Reconstruye `bitacora`, `bitacora_items` (con módulos y archivos), `changelog` e `identidad_manual` desde los markdown exportados,
+    con los mismos ids. Se niega si esas tablas ya tienen datos, salvo `reemplazar=True` (que las vacía; quien llama hace la copia previa).
+    Todo en una sola transacción: si algo falla, no queda nada a medias."""
+    entradas = leer_bitacora(bitacora_md) if bitacora_md is not None else None
+    cl, ident = leer_changelog(changelog_md) if changelog_md is not None else (None, None)
+    if entradas is not None and not entradas:
+        raise ValueError("BITACORA.md no tiene metadatos (<!-- entrada ... -->): es de antes de la Fase 5. Usá el tag `pre-migracion-memoria` o regeneralo.")
+    if cl is not None and not cl and not ident:
+        raise ValueError("CHANGELOG.md no tiene metadatos (<!-- changelog ... -->): es de antes de la Fase 5.")
+    if entradas is None and cl is None:
+        raise ValueError("No hay nada que importar.")
+    asegurar(con)
+    tablas = (TABLAS_BITACORA if entradas is not None else ()) + (TABLAS_CHANGELOG if cl is not None else ())
+    con_datos = [t for t in tablas if con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]]
+    if con_datos and not reemplazar:
+        raise RuntimeError(f"Las tablas {', '.join(con_datos)} ya tienen datos: la importación no pisa nada sin `--reemplazar`.")
+    res = {}
+    try:
+        con.execute("BEGIN")
+        for t in tablas:
+            con.execute(f"DELETE FROM {t}")
+        if entradas is not None:
+            n_items = 0
+            for e in entradas:
+                con.execute("INSERT INTO bitacora (id, fecha, seccion, tipo, titulo, contenido) VALUES (?,?,?,?,?,?)",
+                            (e["id"], e["fecha"], e["seccion"], e["tipo"], e["titulo"], e["contenido"]))
+                for orden, it in enumerate(e["items"], 1):
+                    con.execute("INSERT INTO bitacora_items (id, entrada_id, orden, fecha, tipo, vigencia, reemplazada_por, motivo, resumen, contenido, prueba) "
+                                "VALUES (?,?,?,?,?,?,?,?,?,?,?)", (it["id"], e["id"], orden, it["fecha"], it["tipo"], it["vigencia"], it.get("reemplazada_por"),
+                                                                     it.get("motivo"), it["resumen"], it["contenido"], it.get("prueba")))
+                    con.executemany("INSERT INTO bitacora_item_modulo (item_id, modulo) VALUES (?,?)", [(it["id"], m) for m in it.get("modulos", [])])
+                    con.executemany("INSERT INTO bitacora_item_archivo (item_id, ruta) VALUES (?,?)", [(it["id"], a) for a in it.get("archivos", [])])
+                    n_items += 1
+            res.update(bitacora=len(entradas), items=n_items)
+        if cl is not None:
+            for e in sorted(cl, key=lambda x: x["id"]):
+                con.execute("INSERT INTO changelog (id, fecha, tipo, componente, titulo, detalle, estado, resuelto_en) VALUES (?,?,?,?,?,?,?,?)",
+                            (e["id"], e["fecha"], e["tipo"], e["componente"], e.get("titulo"), e["detalle"], e["estado"], e.get("resuelto_en")))
+            for f in ident:
+                con.execute("INSERT INTO identidad_manual (campo, valor, actualizado) VALUES (?,?,?)", (f["campo"], f["valor"], f["actualizado"]))
+            res.update(changelog=len(cl), identidad=len(ident))
+        _auditar(con, "importar_memoria", {"reemplazar": reemplazar}, str(res))
+        con.commit()
+    except BaseException:
+        con.rollback()
+        raise
+    return res
+
+
+def _carpeta(argv: list[str], opcion: str) -> Path | None:
+    """Carpeta que sigue a `opcion` (--destino, --origen), o la raíz del proyecto si no se pasó."""
+    if opcion not in argv:
+        return RAIZ
+    i = argv.index(opcion)
+    if i + 1 >= len(argv):
+        print(f"{opcion} necesita una carpeta.", file=sys.stderr)
+        return None
+    return Path(argv[i + 1]).expanduser().resolve()
+
+
+def main_importar(argv: list[str]) -> int:
+    origen = _carpeta(argv, "--origen")
+    if origen is None:
         return 2
-    destino = RAIZ
-    if "--destino" in argv:
-        i = argv.index("--destino")
-        if i + 1 >= len(argv):
-            print("--destino necesita una carpeta.", file=sys.stderr)
-            return 2
-        destino = Path(argv[i + 1]).expanduser().resolve()
+    leidos = {a: (origen / a).read_text(encoding="utf-8") for a in ("BITACORA.md", "CHANGELOG.md") if (origen / a).exists()}
+    if not leidos:
+        print(f"No hay BITACORA.md ni CHANGELOG.md en {origen}.", file=sys.stderr)
+        return 1
+    reemplazar = "--reemplazar" in argv
+    con = db.conectar()
+    try:
+        if reemplazar and db.RUTA_DB.exists():
+            copia = db.RUTA_DB.with_name(f"{db.RUTA_DB.name}.antes-de-importar-{db.ahora()}")
+            con.execute(f"VACUUM INTO '{str(copia).replace(chr(39), chr(39) * 2)}'")
+            print("Copia previa:", copia)
+        res = importar(con, leidos.get("BITACORA.md"), leidos.get("CHANGELOG.md"), reemplazar)
+    except (RuntimeError, ValueError) as e:
+        print(e, file=sys.stderr)
+        return 1
+    finally:
+        con.close()
+    print("Importado desde", origen, "->", res)
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if "--importar" in argv:
+        return main_importar(argv)
+    if "--exportar" not in argv:
+        print("Uso: uv run memoria.py --exportar [--destino CARPETA]   (regenera BITACORA.md y CHANGELOG.md desde la base)\n"
+              "     uv run memoria.py --importar [--origen CARPETA] [--reemplazar]   (reconstruye las tablas desde los markdown; "
+              "--reemplazar vacía las que tengan datos, después de hacer una copia de la base)", file=sys.stderr)
+        return 2
+    destino = _carpeta(argv, "--destino")
+    if destino is None:
+        return 2
     if not db.RUTA_DB.exists():
         print("No hay base de datos: no hay nada que exportar.")
         return 0
