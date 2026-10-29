@@ -19,7 +19,8 @@ from pathlib import Path
 
 import psutil
 
-from . import windows_juegos, windows_lecturas_seguridad, windows_notificaciones, windows_sensores, windows_sistema
+from . import (windows_ayudante, windows_juegos, windows_lecturas_seguridad, windows_notificaciones, windows_sensores,
+               windows_sistema)
 from .comun import lista
 
 log = logging.getLogger("pc-doctor")
@@ -229,9 +230,17 @@ def _sensores_crudos():
     return datos
 
 
+def ayudante() -> dict:
+    """Estado que dejó el ayudante con privilegios (instalador/ayudante.ps1), leído una vez por corrida."""
+    if "ayudante" not in _cache:
+        _cache["ayudante"] = windows_ayudante.leer()
+    return _cache["ayudante"]
+
+
 def _lecturas() -> tuple[list[dict], dict]:
     if "meta" not in _cache:
-        _cache["meta"] = windows_sensores.construir(_sensores_crudos(), _particiones(), bool(shutil.which("nvidia-smi")))
+        lecturas, meta = windows_sensores.construir(_sensores_crudos(), _particiones(), bool(shutil.which("nvidia-smi")))
+        _cache["meta"] = (windows_ayudante.mezclar(lecturas, ayudante()), {**meta, "ayudante": ayudante()["estado"]})
     return _cache["meta"]
 
 
@@ -253,7 +262,7 @@ def nvidia_smi_aplica(lecturas: list[dict]) -> bool:
 
 
 def no_disponible(lecturas: list[dict]) -> list[str]:
-    return windows_sensores.no_disponible(lecturas, _lecturas()[1] if "meta" in _cache else {}) + windows_lecturas_seguridad.avisos_no_disponible()
+    return windows_sensores.no_disponible(lecturas, _lecturas()[1] if "meta" in _cache else {}) + windows_lecturas_seguridad.avisos_no_disponible() + windows_ayudante.avisos(ayudante())
 
 
 def limitaciones() -> list[dict]:

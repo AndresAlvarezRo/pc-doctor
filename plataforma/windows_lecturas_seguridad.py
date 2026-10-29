@@ -327,13 +327,17 @@ def persistencia_items() -> list[dict]:
     appinit = [str(v) for v in (_registro("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows", "AppInit_DLLs"),
                                 _registro("HKLM", r"SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Windows", "AppInit_DLLs")) if v and str(v).strip()]
     base = _ps(SCRIPT_PERSISTENCIA, 90) or {}
+    from . import windows, windows_ayudante
+    ayuda = windows.ayudante()
+    propios = lista((base.get("wmi") or {}).get("consumidores"))
+    wmi_sin_acceso = bool(base.get("wmi_sin_acceso")) and ayuda["estado"] != "ok"   # el ayudante con privilegios sí puede leer las suscripciones
     datos = {"run": run, "tareas": lista(base.get("tareas")), "servicios": lista(base.get("servicios")), "inicio": lista(base.get("inicio")),
-             "wmi": {"consumidores": lista((base.get("wmi") or {}).get("consumidores"))},
+             "wmi": {"consumidores": propios + [c for c in windows_ayudante.consumidores_wmi(ayuda) if c.get("Name") not in {p.get("Name") for p in propios}]},
              "winlogon": {"Shell": _registro("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "Shell"),
                           "Userinit": _registro("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "Userinit")},
              "ifeo": ifeo, "appinit": appinit}
     items = ws.items_persistencia(datos, entorno)
-    _cache["persistencia"] = (time.monotonic(), items, bool(base.get("wmi_sin_acceso")))
+    _cache["persistencia"] = (time.monotonic(), items, wmi_sin_acceso)
     return items
 
 
@@ -436,6 +440,8 @@ def revisar_postura() -> list[dict]:
     except (TypeError, ValueError):
         build = 0
     hallazgos = ws.evaluar_postura(datos_postura(), date.today(), build or None, so.get("Caption") or "", winget_upgrade())
+    from . import windows_ayudante
+    hallazgos += windows_ayudante.hallazgos_postura(windows.ayudante())
     from reputacion import cargar_config
     if cargar_config(crear=False).get("kev", False) is True:   # opcional y apagado por defecto
         hallazgos += ws.coincidencias_kev(kev() or {}, windows.paquetes())

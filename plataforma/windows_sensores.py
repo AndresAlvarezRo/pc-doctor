@@ -227,9 +227,9 @@ def no_disponible(lecturas: list[dict], meta: dict) -> list[str]:
                    "(abrí LibreHardwareMonitor; lo configura habilitar-sensores.ps1)")
     if not any(l["categoria"] == "disco" and l["nombre"].endswith("/smart_ok") for l in lecturas):
         res.append("Estado de los discos: Windows no lo entregó (¿falta el módulo Storage de PowerShell?)")
-    elif not any(l["nombre"].endswith(("/sectores_realocados", "/errores_crc")) for l in lecturas):
+    elif not any(l["nombre"].endswith(("/sectores_realocados", "/errores_crc", "/errores_medio")) for l in lecturas):
         res.append("SMART detallado (sectores realocados, errores CRC): sin administrador solo se lee el estado general del disco "
-                   "(habilitar-sensores.ps1 agrega smartctl)")
+                   "(habilitar-sensores.ps1 -ConSmartctl agrega los contadores crudos)")
     if not any(l["categoria"] == "gpu" and l["nombre"].endswith("/uso") for l in lecturas):
         res.append("Uso de la GPU: no hay contadores del motor de GPU en este equipo")
     if not any(l["categoria"] == "gpu" and l["nombre"].endswith("/vram_pct") for l in lecturas):

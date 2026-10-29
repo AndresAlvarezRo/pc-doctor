@@ -1477,3 +1477,69 @@ _2026-10-29 · prueba_
 
 <!-- item {"id":409,"tipo":"prueba","vigencia":"vigente","fecha":"2026-10-29","resumen":"El escaneo real de Linux dio los mismos hallazgos y escuchas antes y después de pasar por la plataforma","modulos":["plataforma","seguridad"],"archivos":["tests/test_seguridad.py"],"prueba":"tests/test_seguridad.py::test_el_escaneo_completo_suma_lo_extra_de_la_plataforma_y_ordena_por_severidad"} -->
 - **Foto antes/después** de `seguridad.escanear()` en esta PC (hallazgos con su huella y escuchas): idénticas. Como el módulo casi no tenía pruebas, se agregaron `tests/test_seguridad.py` (procesos, escuchas con IPv6 por `socket.AF_INET6`, orden por severidad, deduplicación) y las de `_cymru` con `dig` falso.
+
+## Windows: fase 3, ayudante con privilegios
+
+### LibreHardwareMonitor v0.9.6 verificado
+_2026-10-29 · nota_
+<!-- entrada {"id":104,"seccion":"Windows: fase 3, ayudante con privilegios","titulo":"LibreHardwareMonitor v0.9.6 verificado","fecha":"2026-10-29","tipo":"nota"} -->
+
+<!-- item {"id":410,"tipo":"nota","vigencia":"vigente","fecha":"2026-10-29","resumen":"LibreHardwareMonitor v0.9.6: zip verificado contra el hash de GitHub, build .NET Framework, sin el driver PawnIO","modulos":["instalador","windows"]} -->
+- **Verificado (2026-10-29):** `LibreHardwareMonitor.zip` de la release v0.9.6 (2026-02-14) tiene SHA-256 `086d9f1b5a99e643edc2cfaaac16051685b551e4c5ac0b32a57c58c0e529c001`, igual al que publica GitHub.
+  - Es la build para .NET Framework (`LibreHardwareMonitor.exe` + `.exe.config`, sin runtime aparte); la otra, `.NET.10.zip`, pide el runtime de .NET 10.
+  - **No trae el driver PawnIO** (los módulos de CPU y placa dependen de él desde la 0.9.5, con instalador aparte): qué sensores funcionan sin él está sin verificar.
+
+### Lo que corre con privilegios hace lo mínimo
+_2026-10-29 · decision_
+<!-- entrada {"id":105,"seccion":"Windows: fase 3, ayudante con privilegios","titulo":"Lo que corre con privilegios hace lo mínimo","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":411,"tipo":"invariante","vigencia":"vigente","fecha":"2026-10-29","resumen":"`ayudante.ps1` no tiene parámetros ni red, solo lee y solo escribe `estado.json` con comandos de una lista fija","modulos":["instalador","windows"],"archivos":["instalador/ayudante.ps1"],"prueba":"tests/test_instalador.py::test_el_ayudante_solo_usa_los_comandos_permitidos"} -->
+- **Única pieza elevada** (tarea `pc-doctor-ayudante`, SYSTEM, cada 15 min): lee SMART, contadores de fiabilidad, BitLocker (nunca claves), Secure Boot, exclusiones de Defender y suscripciones WMI.
+  - Una prueba lee el archivo y exige que use solo los comandos permitidos, sin `Invoke-*`, red, `Start-Process`, rutas de usuario ni parámetros, y con un solo `WriteAllText` y un solo `Move-Item`.
+  - Cualquier cambio que amplíe lo elevado rompe esa prueba y obliga a registrar la decisión.
+  **(invariante · prueba: tests/test_instalador.py::test_el_ayudante_solo_usa_los_comandos_permitidos)**
+
+### Dónde vive lo elevado
+_2026-10-29 · decision_
+<!-- entrada {"id":106,"seccion":"Windows: fase 3, ayudante con privilegios","titulo":"Dónde vive lo elevado","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":412,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Salida del ayudante en `%ProgramData%` de solo lectura para usuarios, no en la carpeta de datos del usuario","modulos":["instalador","windows"],"archivos":["instalador/habilitar-sensores.ps1"],"prueba":"tests/test_instalador.py::test_las_carpetas_con_privilegios_solo_se_escriben_por_system_y_administradores_y_se_verifica"} -->
+- **Por qué:** una tarea SYSTEM que escribe en una carpeta que el usuario controla se puede engañar con un enlace simbólico para pisar archivos del sistema. El script, LibreHardwareMonitor y smartctl viven en `%ProgramFiles%\pc-doctor-ayudante` y la salida en `%ProgramData%\pc-doctor\ayudante`; en las dos solo escriben SYSTEM y Administradores (permisos por SID, verificados después de fijarlos).
+  - Solo hay dos tareas con privilegios: `pc-doctor-ayudante` (SYSTEM) y `pc-doctor-lhm` (el usuario, al iniciar sesión, que tiene que ser administrador). El recolector, el dashboard y el reporte siguen sin privilegios.
+  - Decisión del usuario (2026-10-29): se aprobó esta ubicación en lugar de la carpeta de datos.
+
+### Descargas verificadas y opcionales
+_2026-10-29 · decision_
+<!-- entrada {"id":107,"seccion":"Windows: fase 3, ayudante con privilegios","titulo":"Descargas verificadas y opcionales","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":413,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Cada descarga se verifica por SHA-256 contra `versiones.toml`; smartctl y el driver PawnIO son opcionales","modulos":["instalador","windows"],"archivos":["instalador/habilitar-sensores.ps1","instalador/versiones.toml"],"prueba":"tests/test_instalador.py::test_cada_descarga_se_verifica_contra_versiones_toml_antes_de_usarla"} -->
+- **versiones.toml** fija LibreHardwareMonitor 0.9.6 (hash verificado contra GitHub), smartmontools 7.5 (el MD5 coincide con el publicado; el SHA-256 lo calculamos acá porque GitHub no lo da; la firma GPG no se verificó) y PawnIO 2.2.0 (hash verificado contra GitHub). Solo se aceptan direcciones `https://github.com/`; si el hash no coincide se borra y se corta.
+  - **smartctl** (`-ConSmartctl`) es lo único que da los sectores realocados, pendientes y errores CRC; el instalador se verifica también por su firma Authenticode.
+  - **PawnIO** (`-InstalarPawnIO`) es un driver de kernel: se abre su asistente (sin parámetros silenciosos) tras una confirmación aparte y `-Deshacer` nunca lo desinstala porque otros programas pueden usarlo.
+
+### Lectura del estado del ayudante
+_2026-10-29 · decision_
+<!-- entrada {"id":108,"seccion":"Windows: fase 3, ayudante con privilegios","titulo":"Lectura del estado del ayudante","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":414,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"`estado.json` se valida (tamaño, versión, campos conocidos) y el SMART crudo pasa por `salud.parsear_smart`","modulos":["salud","windows"],"archivos":["plataforma/windows_ayudante.py"],"prueba":"tests/test_windows_ayudante.py::test_solo_pasan_los_campos_conocidos_con_la_forma_esperada"} -->
+- **Validación:** hasta 1 MB, versión 1, solo campos conocidos con la forma esperada y textos acotados; si tiene más de 2 h se avisa en vez de usarlo; nunca se ejecuta nada que venga del archivo.
+  - **Mismos nombres que Linux:** el `smartctl -j` entra por el parser de Linux, así `sectores_pendientes` o `errores_crc` activan las reglas existentes; los contadores de fiabilidad aportan temperatura y desgaste si el SMART no los trae, y el ayudante manda sobre lo que ya había.
+  - **Postura:** BitLocker suspendido, Secure Boot apagado y exclusiones de Defender (riesgosas = carpeta temporal o del usuario, unidad entera o tipo ejecutable). Las suscripciones WMI del ayudante alimentan la persistencia de la fase 2.
+
+### Scripts de PowerShell sin ejecutar
+_2026-10-29 · limitacion_
+<!-- entrada {"id":109,"seccion":"Windows: fase 3, ayudante con privilegios","titulo":"Scripts de PowerShell sin ejecutar","fecha":"2026-10-29","tipo":"limitacion"} -->
+
+<!-- item {"id":415,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"Los `.ps1` solo se validaron con un parser de sintaxis y pruebas estáticas; ninguno corrió en Windows","modulos":["instalador","windows"],"archivos":["instalador/ayudante.ps1","instalador/habilitar-sensores.ps1"]} -->
+- **Verificado:** sintaxis con un parser de PowerShell (tree-sitter, de uso puntual y no una dependencia del proyecto, que detectó un script roto a propósito), archivos en UTF-8 con BOM (Windows PowerShell 5.1 lee un `.ps1` sin BOM como ANSI y rompe los acentos) y las reglas de seguridad por prueba estática.
+  - **Sin verificar:** nombres de los ajustes de LibreHardwareMonitor (`startMinMenuItem`...), `smartmontools-setup.exe /S /D=` y el desinstalador `/S _?=`, `Get-LocalGroupMember` (puede fallar con cuentas huérfanas), `-RepetitionDuration` de 3650 días, el nombre de dispositivo `/dev/sdX` de smartctl en Windows, y qué sensores necesitan el driver PawnIO.
+  - **Requisito:** el usuario de la sesión tiene que ser administrador para la tarea de LibreHardwareMonitor; si no, quedan sin medir las temperaturas, ventiladores y voltajes.
+
+### Cierre de la fase 3
+_2026-10-29 · nota_
+<!-- entrada {"id":110,"seccion":"Windows: fase 3, ayudante con privilegios","titulo":"Cierre de la fase 3","fecha":"2026-10-29","tipo":"nota"} -->
+
+<!-- item {"id":416,"tipo":"pendiente","vigencia":"vigente","fecha":"2026-10-29","resumen":"Pendiente: `instalar.ps1` ofrece el ayudante, `empaquetar.py` incluye `instalador/` y la guía lo explica","modulos":["instalador","windows"]} -->
+- **Fase 5:** el paquete lleva `instalador/ayudante.ps1`, `habilitar-sensores.ps1` y `versiones.toml` (en la raíz del zip, como pidió el usuario) y `empaquetar.py` falla si algún `.ps1` perdió el BOM.
+  - **Fase 6:** `instalar.ps1` ofrece el ayudante al final y `-Verificar` informa si hay datos recientes de `estado.json`.
+  - **Fase 7:** documentar en lenguaje simple qué agrega el ayudante, cómo verlo y cómo deshacerlo.
