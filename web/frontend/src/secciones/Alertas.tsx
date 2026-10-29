@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useApi } from '../api'
 import { Aviso, Contenido, InsigniaSeveridad, Seccion } from '../comunes'
-import { IconoRelacion } from '../iconos'
+import { IconoInfo, IconoRelacion } from '../iconos'
 import { fechaYHora, hace } from '../formato'
 import type { Alerta, Correlacion, Hallazgo } from '../tipos'
 
@@ -54,6 +54,11 @@ function FilaAlerta({ a, abierta, alAlternar, tick }: { a: Alerta; abierta: bool
       <p className="fila-meta">
         {CATEGORIAS[a.categoria ?? ''] ?? a.categoria ?? 'General'} · Desde {fechaYHora(a.desde * 1000)} ({hace(a.desde)}) · {a.veces} {a.veces === 1 ? 'vez' : 'veces'}
       </p>
+      {a.hecho_conocido && (
+        <p className="relacion hecho-conocido">
+          <IconoInfo /> <span><strong>Hecho conocido #{a.hecho_conocido.id}:</strong> {a.hecho_conocido.texto}{a.hecho_conocido.vence ? ` (a revisar el ${a.hecho_conocido.vence})` : ''}. No se vuelve a avisar mientras no empeore.</span>
+        </p>
+      )}
       {a.relacion && (
         <p className="relacion">
           <IconoRelacion /> <span><strong>Posible relación:</strong> {a.relacion}</span>

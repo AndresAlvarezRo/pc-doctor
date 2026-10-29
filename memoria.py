@@ -66,6 +66,14 @@ CREATE TABLE IF NOT EXISTS hechos_conocidos (
     activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0,1))
 );
 CREATE INDEX IF NOT EXISTS idx_hechos_activo ON hechos_conocidos(activo, aplica_a);
+CREATE TABLE IF NOT EXISTS hechos_referencia (
+    hecho_id INTEGER NOT NULL,      -- con qué estado quedó silenciada una alerta: si empeora, vuelve a avisar
+    clave TEXT NOT NULL,
+    severidad TEXT NOT NULL,
+    valor REAL,
+    desde INTEGER NOT NULL,
+    PRIMARY KEY (hecho_id, clave)
+);
 
 CREATE TABLE IF NOT EXISTS bitacora (
     id INTEGER PRIMARY KEY,
@@ -303,6 +311,82 @@ def retirar_hecho_conocido(con, ident: int) -> dict:
     _auditar(con, "retirar_hecho_conocido", {"id": ident}, "retirado")
     con.commit()
     return {"mensaje": "Hecho conocido retirado (queda guardado como inactivo; no se borra)."}
+
+
+# ---------- efecto de los hechos conocidos en las alertas ----------
+
+RANGO_SEVERIDAD = {"aviso": 1, "critico": 2}
+TOLERANCIA_REL = 0.05   # cuánto puede moverse un valor (de una alerta que no es de contadores) sin contar como empeoramiento
+
+
+def hecho_de(hechos: list, cond: dict):
+    """El primer hecho vigente cuyo `aplica_a` se refiere a la clave o al nombre del sensor de la alerta; None si ninguno."""
+    for h in hechos:
+        if aplica(h["aplica_a"], cond["clave"]) or aplica(h["aplica_a"], cond.get("nombre") or ""):
+            return h
+    return None
+
+
+def empeoro(cond: dict, ref) -> bool:
+    """¿La alerta está peor que cuando quedó silenciada? Sube la severidad o el valor se aleja de lo normal.
+
+    Los contadores de SMART (`smart_*`) cuentan cualquier aumento (un sector defectuoso más ya es una novedad); el resto, un
+    cambio de más del 5 %. Los eventos del journal solo empeoran si escala la severidad. `dir` "min" = peor cuanto más bajo.
+    """
+    if RANGO_SEVERIDAD.get(cond["severidad"], 0) > RANGO_SEVERIDAD.get(ref["severidad"], 0):
+        return True
+    if cond.get("evento") or ref["valor"] is None or cond.get("valor") is None:
+        return False
+    delta = (ref["valor"] - cond["valor"]) if cond.get("dir") == "min" else (cond["valor"] - ref["valor"])
+    tolerancia = 0 if cond["clave"].startswith("smart_") else TOLERANCIA_REL * abs(ref["valor"])
+    return delta > tolerancia
+
+
+def filtrar_avisos(con, a_avisar: list[dict], conds: dict[str, dict], ahora: int) -> list[dict]:
+    """Aplica los hechos conocidos a los avisos. Lo cubierto por un hecho y sin cambios se silencia (aunque tocara avisar o
+    recordar); lo que empeoró desde que se silenció se avisa, aclarando que había un hecho conocido; lo no cubierto sigue igual.
+
+    Se mira TODA condición vigente (`conds`) y no solo las que tocaba avisar: un empeoramiento puede ocurrir en medio de la
+    ventana de repetición. Sin hechos activos (o sin las tablas) devuelve la lista tal cual y no toca la base."""
+    hechos = hechos_activos(con)
+    if not hechos:
+        return a_avisar
+    asegurar(con)       # solo hay hechos si alguien los declaró: la tabla de referencias se crea ahora si faltaba
+    res = [c for c in a_avisar if hecho_de(hechos, c) is None]
+    for c in conds.values():
+        h = hecho_de(hechos, c)
+        if h is None:
+            continue
+        ref = con.execute("SELECT * FROM hechos_referencia WHERE hecho_id=? AND clave=?", (h["id"], c["clave"])).fetchone()
+        if ref is not None and not empeoro(c, ref):
+            continue                                    # conocido y sin cambios: se silencia
+        if ref is not None:                             # empeoró: se avisa, diciendo que había un hecho conocido
+            antes = ref["severidad"] if c.get("evento") or ref["valor"] is None else f"{ref['valor']:g}"   # en un evento el valor es su hora
+            res.append({**c, "mensaje": f"{c['mensaje']} [hecho conocido #{h['id']}: empeoró (antes {antes})]", "hecho_id": h["id"]})
+        # primera vez bajo el hecho (se silencia) o empeoramiento (se avisa): en ambos casos se anota el estado de referencia
+        con.execute("INSERT OR REPLACE INTO hechos_referencia (hecho_id, clave, severidad, valor, desde) VALUES (?,?,?,?,?)",
+                    (h["id"], c["clave"], c["severidad"], c.get("valor"), ahora))
+    return res
+
+
+def olvidar_referencias(con, claves: list[str]) -> None:
+    """Cuando una alerta se resuelve, la próxima vez que aparezca cuenta como primera vez bajo el hecho."""
+    if claves and existe(con, "hechos_referencia"):
+        con.executemany("DELETE FROM hechos_referencia WHERE clave=?", [(k,) for k in claves])
+
+
+def empeorada(con, alerta: dict) -> bool:
+    """Una alerta que tiene hecho conocido: ¿está peor que cuando se silenció? Sin referencia anotada, no (todavía no se silenció)."""
+    h = alerta.get("hecho_conocido")
+    if not h or not existe(con, "hechos_referencia"):
+        return False
+    ref = con.execute("SELECT * FROM hechos_referencia WHERE hecho_id=? AND clave=?", (h["id"], alerta["clave"])).fetchone()
+    return ref is not None and empeoro({**alerta, "evento": alerta["clave"].startswith("evento:")}, ref)
+
+
+def compacto(h) -> dict | None:
+    """El hecho conocido en forma breve, para mostrarlo junto a una alerta."""
+    return None if h is None else {"id": h["id"], "texto": corto(h["texto"], 300), "aplica_a": h["aplica_a"], "vence": h["vence"]}
 
 
 # ---------- bitácora ----------

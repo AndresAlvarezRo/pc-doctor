@@ -15,6 +15,7 @@ import psutil
 import actividad
 import db
 import linea_base
+import memoria
 import reputacion
 import salud
 
@@ -32,7 +33,13 @@ def alertas(con, solo_activas: bool = True, dias: int = 7, limite: int = 200) ->
     filas = con.execute(
         f"SELECT rowid AS id, * FROM alertas_salud WHERE ultima_vez >= ? {'AND activa=1' if solo_activas else ''} "
         "ORDER BY activa DESC, severidad DESC, ultima_vez DESC LIMIT ?", (t, limite)).fetchall()
-    return [dict(f) for f in filas]
+    hechos = memoria.hechos_activos(con)    # vacío si el usuario no declaró ninguno (o si las tablas no existen)
+    res = []
+    for f in filas:
+        d = dict(f)
+        d["hecho_conocido"] = memoria.compacto(memoria.hecho_de(hechos, {"clave": d["clave"], "nombre": d["nombre"]}))
+        res.append(d)
+    return res
 
 
 def hallazgos(con, estado: str = "nuevo", dias: int = 30, limite: int = 200) -> tuple[int, list[dict]]:

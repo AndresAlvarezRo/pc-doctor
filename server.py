@@ -467,7 +467,8 @@ def alertas_salud(solo_activas: bool = True, dias: int = 7) -> dict:
     """Lista las alertas de salud registradas por el recolector (temperaturas, discos, memoria, GPU, eventos del kernel).
 
     Con `solo_activas=True` muestra solo las que siguen vigentes; si no, también las resueltas de los últimos `dias`.
-    El `id` sirve para `correlacionar(alerta_id)`.
+    El `id` sirve para `correlacionar(alerta_id)`. Si el usuario declaró un hecho conocido que cubre la alerta, viene en
+    `hecho_conocido` (no se avisa de nuevo mientras no empeore).
     """
     con = db.conectar()
     try:
@@ -475,7 +476,8 @@ def alertas_salud(solo_activas: bool = True, dias: int = 7) -> dict:
         return {"total": len(filas), "alertas": [
             {"id": f["id"], "severidad": f["severidad"], "estado": "activa" if f["activa"] else "resuelta", "categoria": f["categoria"],
              "mensaje": f["mensaje"], "desde": db.iso(f["desde"]), "ultima_vez": db.iso(f["ultima_vez"]),
-             "resuelta_en": db.iso(f["resuelta_en"]) if f["resuelta_en"] else None, "veces": f["veces"]} for f in filas]}
+             "resuelta_en": db.iso(f["resuelta_en"]) if f["resuelta_en"] else None, "veces": f["veces"],
+             **({"hecho_conocido": f["hecho_conocido"]} if f["hecho_conocido"] else {})} for f in filas]}
     finally:
         con.close()
 

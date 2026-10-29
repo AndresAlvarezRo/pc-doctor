@@ -24,6 +24,7 @@ if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
 import db  # noqa: E402
+import memoria  # noqa: E402
 
 db.SOLO_LECTURA = True  # ninguna función de consulta puede escribir
 
@@ -274,6 +275,29 @@ def diagnosticos(dias: int = Query(30, ge=1, le=365)):
             raise NoDisponible("el diagnóstico automático aún no está implementado")
         filas = con.execute("SELECT * FROM diagnosticos WHERE ts >= ? ORDER BY ts DESC LIMIT 100", (db.ahora() - dias * 86400,)).fetchall()
         return {"diagnosticos": [dict(f) for f in filas]}
+
+
+@app.get("/api/hechos")
+def hechos():
+    """Hechos conocidos declarados por el usuario: los vigentes y los vencidos que hay que revisar (solo lectura)."""
+    with conexion() as con:
+        r = memoria.hechos_conocidos(con)
+        r.pop("nota", None)
+        return r
+
+
+@app.get("/api/changelog")
+def changelog(estado: str = "todos", n: int = Query(100, ge=1, le=300)):
+    """Changelog de la PC con lo abierto primero. `estado`: abierto, resuelto o todos (solo lectura)."""
+    if estado not in ("abierto", "resuelto", "todos"):
+        raise ValueError("estado debe ser abierto, resuelto o todos")
+    with conexion() as con:
+        if not memoria.existe(con, "changelog"):
+            return {"total": 0, "abiertos": 0, "entradas": []}
+        filtro, par = ("", ()) if estado == "todos" else ("WHERE estado=?", (estado,))
+        filas = con.execute(f"SELECT * FROM changelog {filtro} ORDER BY estado='resuelto', fecha DESC, id DESC LIMIT ?", (*par, n)).fetchall()
+        abiertos = con.execute("SELECT COUNT(*) FROM changelog WHERE estado='abierto'").fetchone()[0]
+        return {"total": len(filas), "abiertos": abiertos, "entradas": [dict(f) for f in filas]}
 
 
 @app.get("/api/entorno")

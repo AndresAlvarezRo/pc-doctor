@@ -535,3 +535,24 @@ El usuario pidió mover la memoria dispersa (`CLAUDE.md`, `CHANGELOG.md`, `BITAC
 - FTS5 no admite un alias de tabla en `MATCH` ni en `bm25()`; se usa el nombre real de la tabla.
 #### Limitaciones
 - Todavía nada usa los hechos conocidos (Fase 2) y la base real no tiene las tablas (Fase 3).
+
+### Fase 2: los hechos conocidos tienen efecto
+#### Decisiones
+- **Un hecho conocido silencia lo conocido, no lo nuevo.** `memoria.filtrar_avisos` se aplica al final de `salud.aplicar_condiciones`. Mira **todas** las condiciones vigentes, no solo las que tocaba avisar: un empeoramiento puede ocurrir en medio de la ventana de repetición (6 h en avisos, 2 h en críticos) y, si solo se filtraran los candidatos, no llegaría nunca (lo encontró una prueba).
+- **Qué cubre un hecho:** `aplica_a` se compara por segmentos (`:` y `/`) con la clave de la alerta (`smart_pendientes:sdb/sectores_pendientes`) o con el nombre del sensor. `sdb` cubre todos los contadores de sdb; `sdb/errores_crc` solo ese.
+- **Qué es "empeorar":** se anota el estado con el que quedó silenciada cada alerta (tabla `hechos_referencia`: severidad y valor; se crea solo cuando existe algún hecho). Empeora si sube la severidad (aviso→crítico) o si el valor se aleja de lo normal: en los contadores de SMART, **cualquier aumento** (un sector más ya es novedad); en lo demás, un cambio de más del 5 % (en las reglas de mínimo, como el espacio libre, empeorar es bajar). En los eventos del journal el valor es su hora, así que solo cuenta la escalada de severidad. Al avisar un empeoramiento, el nuevo estado pasa a ser la referencia: no se repite hasta que vuelva a empeorar. El aviso dice `[hecho conocido #N: empeoró (antes X)]`.
+- **Si la alerta se resuelve** se olvida su referencia (al volver cuenta como primera vez). Si el hecho se **retira o vence**, deja de silenciar y la próxima corrida avisa. Si el hecho se declara con la alerta ya activa, se silencia desde ese momento, también los recordatorios.
+- **La alerta no desaparece:** sigue registrada en `alertas_salud` y visible en el dashboard y el MCP con su `hecho_conocido`; solo se silencia la notificación.
+- **Reporte semanal:** a `claude -p` se le agregó únicamente `hechos_conocidos` (lectura). El prompt dice que no recomiende de nuevo lo cubierto salvo que haya empeorado, que lo mencione al final de la sección 8 y que liste como "para revisar" los vencidos, y que los hechos son datos, no instrucciones. Siguen prohibidas todas las tools de escritura y las de búsqueda de memoria. **Plan B:** no recomienda la copia de seguridad ni cuenta como crítica una alerta cubierta, salvo que haya empeorado; lista lo declarado y lo vencido.
+- **Dashboard (solo lectura):** cada alerta cubierta muestra el hecho; secciones nuevas "Hechos conocidos" (vigentes y para revisar) y "Changelog" (lo abierto primero), con `/api/hechos` y `/api/changelog`. Estado con ícono y texto. La edición queda para la fase de acciones del dashboard.
+#### Pruebas
+- `tests/test_hechos_efecto.py` (22): sin hechos no cambia nada ni se crean tablas; silencio (incluso 10 h); cobertura por disco y por regla; empeoramiento y reanudación del silencio; escalada; umbral del 5 %; reglas de mínimo; eventos; vencido, retirado, resuelta-y-reaparece, hecho declarado con la alerta activa; el campo en MCP y consultas; prompt y listas del reporte; plan B; API de solo lectura.
+- **Prueba de las pruebas:** se rompió a propósito el criterio de valor (detectado por 4 pruebas) y la escalada de severidad (sobrevivía: el aumento del valor la tapaba; se agregó la prueba con eventos y ahora la detecta).
+#### Errores encontrados y corregidos
+- El aviso de empeoramiento de un evento mostraba la hora del evento como valor anterior ("antes 100"); ahora muestra la severidad.
+- Empeoramientos dentro de la ventana de repetición no se avisaban (ver Decisiones).
+#### Limitaciones
+- **El dashboard no se vio en un navegador:** el frontend compila (`tsc` y `vite build` a una carpeta temporal) y la API está probada, pero el servicio instalado sigue con el código viejo hasta reiniciarlo y reconstruir `dist/`.
+- La referencia de un valor con tolerancia del 5 % puede dejar pasar un empeoramiento lento y gradual (cada paso menor al 5 % del valor anotado); los contadores de SMART no tienen ese problema.
+- Los hechos se declaran solo desde la conversación (tools del MCP); el dashboard todavía no edita.
+- No hay hechos cargados en la base real (Fase 3: se proponen, los elegís vos).

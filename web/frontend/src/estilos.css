@@ -167,7 +167,7 @@ nav.secciones a:hover { background: var(--superficie-2); color: var(--texto); }
 .fila { background: var(--superficie); border: 1px solid var(--borde); border-left-width: 5px; border-radius: var(--radio); padding: 12px 14px; }
 .fila-critico, .fila-h-alta { border-left-color: var(--critico); }
 .fila-aviso, .fila-h-media { border-left-color: var(--aviso); }
-.fila-h-baja { border-left-color: var(--info); }
+.fila-h-baja, .fila-info { border-left-color: var(--info); }
 .fila-resuelta { opacity: 0.8; }
 .fila-cabecera { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .fila-estado { font-size: 13px; color: var(--texto-suave); }
@@ -256,3 +256,9 @@ nav.secciones a:hover { background: var(--superficie-2); color: var(--texto); }
   .tarjeta-valor { font-size: 24px; }
   .segmentos button { padding: 5px 9px; }
 }
+
+/* hechos conocidos y changelog */
+.hecho-conocido { background: var(--superficie-2, var(--info-fondo)); }
+.detalle-texto { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 6px; font-size: 14px; }
+.fila details { margin-top: 8px; }
+.fila summary { cursor: pointer; font-size: 14px; color: var(--texto-suave); }

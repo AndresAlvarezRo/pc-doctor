@@ -123,6 +123,41 @@ export interface Alerta {
   activa: number
   estado: 'activa' | 'resuelta'
   relacion: string | null
+  /** Hecho que el usuario declaró como conocido y cubre esta alerta (no se avisa de nuevo mientras no empeore). */
+  hecho_conocido: HechoAlerta | null
+}
+
+export interface HechoAlerta {
+  id: number
+  texto: string
+  aplica_a: string | null
+  vence: string | null
+}
+
+export interface HechoConocido extends HechoAlerta {
+  creado: string
+}
+
+export interface RespuestaHechos {
+  activos: HechoConocido[]
+  para_revisar: HechoConocido[]
+}
+
+export interface EntradaChangelog {
+  id: number
+  fecha: string
+  tipo: 'error' | 'solucion' | 'cambio' | 'observacion'
+  componente: string
+  titulo: string | null
+  detalle: string
+  estado: 'abierto' | 'resuelto'
+  resuelto_en: string | null
+}
+
+export interface RespuestaChangelog {
+  total: number
+  abiertos: number
+  entradas: EntradaChangelog[]
 }
 
 export interface Hallazgo {

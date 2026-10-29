@@ -5,6 +5,7 @@ import type { EstadoGeneral, NoDisponible, Tarjeta } from './tipos'
 import { Alertas } from './secciones/Alertas'
 import { Encabezado } from './secciones/Encabezado'
 import { Entorno } from './secciones/Entorno'
+import { Changelog, HechosConocidos } from './secciones/Memoria'
 import { LineaDeTiempo } from './secciones/LineaDeTiempo'
 import { Limitaciones } from './secciones/Limitaciones'
 import { Tarjetas } from './secciones/Tarjetas'
@@ -75,6 +76,8 @@ export default function App() {
               <a href="#alertas">Alertas y hallazgos</a>
               <a href="#linea-de-tiempo">Línea de tiempo</a>
               <a href="#reportes">Reportes</a>
+              <a href="#hechos-conocidos">Hechos conocidos</a>
+              <a href="#changelog">Changelog</a>
               <a href="#limitaciones">Limitaciones</a>
               <a href="#entorno">Entorno</a>
             </nav>
@@ -85,6 +88,8 @@ export default function App() {
               <Alertas tick={tick} abrirAlerta={alertaAbierta} abrirHallazgo={hallazgoAbierto} />
               <LineaDeTiempo tick={tick} alAbrirAlerta={(id) => ir(`/alerta/${id}`)} />
               <Suspense fallback={<Cargando />}><Reportes tick={tick} /></Suspense>
+              <HechosConocidos tick={tick} />
+              <Changelog tick={tick} />
               <Limitaciones tick={tick} />
               <Entorno tick={tick} />
             </main>

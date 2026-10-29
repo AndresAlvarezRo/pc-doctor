@@ -18,6 +18,7 @@ import alertas
 import correlacion
 import db
 import linea_base
+import memoria
 from db import ejecutar, log
 from reputacion import cargar_config
 
@@ -380,7 +381,8 @@ def condiciones(con, lecturas: list[dict], cfg: dict, activas: set[str], en_base
         if severidad:
             lim = p["critico"] if severidad == "critico" else p["aviso"]
             res[clave] = {"clave": clave, "categoria": l["categoria"], "nombre": l["nombre"], "severidad": severidad,
-                          "valor": l["valor"], "mensaje": f"{r['texto']}: {l['nombre']} = {l['valor']:g} {l['unidad']} (límite {lim:g})"}
+                          "valor": l["valor"], "dir": r.get("dir"),
+                          "mensaje": f"{r['texto']}: {l['nombre']} = {l['valor']:g} {l['unidad']} (límite {lim:g})"}
     # ventilador detenido con el chip caliente
     for l in lecturas:
         # un conector sin ventilador marca 0 siempre: solo cuenta si ese ventilador alguna vez giró
@@ -440,7 +442,9 @@ def aplicar_condiciones(con, conds: dict[str, dict], vistos: set[str], ahora: in
         if clave not in conds and (clave.startswith("evento:") or f["nombre"] in vistos):
             con.execute("UPDATE alertas_salud SET activa=0, resuelta_en=? WHERE clave=?", (ahora, clave))
             resueltas.append(clave)
-    return {"a_avisar": a_avisar, "resueltas": resueltas}
+    # los hechos conocidos que declaró el usuario silencian lo que no cambió (lo nuevo y lo que empeora sigue avisando)
+    memoria.olvidar_referencias(con, resueltas)
+    return {"a_avisar": memoria.filtrar_avisos(con, a_avisar, conds, ahora), "resueltas": resueltas}
 
 
 def _relacion(con, cond: dict, ahora: int) -> str | None:
