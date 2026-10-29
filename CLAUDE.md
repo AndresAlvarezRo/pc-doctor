@@ -13,11 +13,22 @@ Diagnóstico de la PC (Zorin OS 18 / Ubuntu 24.04): recolector, servidor MCP y d
 - El proyecto debe verse en el explorador de archivos: no crear archivos ni carpetas con punto. Excepción (para git): `.gitignore`, `.git/`, `.github/` y lo que git necesite.
 
 ## Memoria
-- Antes de responder sobre la PC o el proyecto, usar `buscar_memoria`, `hechos_conocidos` y `changelog_abierto` en vez de suponer.
-- Registrar cada decisión de diseño, error encontrado y limitación con `registrar_bitacora`, y cada revisión del funcionamiento de la PC con `registrar_changelog` (`resolver_changelog` si cierra una entrada abierta).
-- `BITACORA.md` y `CHANGELOG.md` son archivos generados desde la base: no se editan a mano (el hook pre-commit los regenera con `uv run memoria.py --exportar`). `memoria` y `hechos_conocidos` no se exportan a git.
-- Si cambia una fila de la identidad de la PC que no se calcula sola (energía, red expuesta, sensores extra, Node.js), actualizarla con `registrar_identidad`.
+Bitácora del proyecto (en `doctor.db`, por módulos; el mapa de archivos está en `modulos.py`). Cargar solo lo que la tarea necesita:
+- Al empezar cualquier cambio: `contexto(tipo="invariante")`.
+- Antes de editar un archivo: `contexto(archivo="<ruta>")`.
+- Antes de depurar: `contexto(modulo=..., tipo="error")`.
+- Antes de escribir pruebas: `contexto(modulo=..., tipo="prueba")` y `contexto(modulo=..., tipo="limitacion")`.
+- Antes de tocar algo fuera del repo: `contexto(modulo="sistema")`.
+- Para "¿por qué es así?": `buscar_bitacora(consulta)` y `detalle_bitacora(id)` solo de lo que haga falta.
+- Para planificar: `pendientes()`.
+- Cada decisión, error, limitación o pendiente nuevo: `registrar_bitacora` (tipo, módulos y un resumen de una línea). Si contradice una decisión anterior, registrar la nueva y `marcar_superada` la vieja.
+
+PC (changelog, identidad y hechos conocidos):
+- Antes de responder sobre la PC, usar `buscar_memoria`, `hechos_conocidos` y `changelog_abierto` en vez de suponer.
+- Cada revisión del funcionamiento de la PC: `registrar_changelog` (`resolver_changelog` si cierra una entrada abierta).
+- Si cambia una fila de la identidad que no se calcula sola (energía, red expuesta, sensores extra, Node.js), `registrar_identidad`.
 - Los hechos conocidos solo se declaran o retiran si el usuario lo pide de forma explícita.
+- `BITACORA.md` y `CHANGELOG.md` son archivos generados desde la base: no se editan a mano (el hook pre-commit los regenera con `uv run memoria.py --exportar`). `memoria` y `hechos_conocidos` no se exportan a git.
 
 ## Pruebas
 - `uv run pytest` corre todo. Marcadores: `lento` (el hook pre-commit corre `-m "not lento"`) y `local` (leen sensores o procesos reales; en CI se saltean con `-m "not local"`).
