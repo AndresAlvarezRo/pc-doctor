@@ -3,7 +3,7 @@
 Sistema de diagnóstico de la PC (Zorin OS 18 / Ubuntu 24.04) en tres partes:
 
 1. `collector.py`: recolector pasivo; lo ejecuta un systemd user timer (cada 15 min y al boot). Guarda en SQLite.
-2. `server.py`: servidor MCP (FastMCP) para consultar historial, estado en vivo y ejecutar acciones seguras (23 tools).
+2. `server.py`: servidor MCP (FastMCP) para consultar historial, estado en vivo y ejecutar acciones seguras (35 tools).
 3. `web/`: dashboard local. Backend FastAPI en `web/api.py` (solo `127.0.0.1:8787`, solo lectura por ahora) y frontend React + Vite + TypeScript + Recharts en `web/frontend/`, que se compila con `bash web/construir.sh` a `web/frontend/dist/` y lo sirve la propia API. `web/datos_de_prueba.py` genera datos sintéticos; `web/generar_iconos.py`, los íconos.
 
 Módulos compartidos (el dashboard y el MCP muestran exactamente lo mismo porque usan las mismas funciones):

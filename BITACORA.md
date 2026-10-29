@@ -516,3 +516,22 @@ El usuario subió el proyecto a GitHub (`origin/main`, un commit inicial) y pidi
 - **Reproducción antes de corregir:** con la CPU saturada (24 procesos de carga) la falla aparece sola: 1 de 12 corridas, con el mismo `assert (2 == 1)`.
 - **Corrección:** `tests/conftest.py` mata y espera a cualquier proceso en segundo plano que una prueba haya dejado (el escucha `--con-boton` y los `notify-send` falsos), antes de vaciar el registro y al terminar cada prueba. Con la misma carga: 0 de 24 corridas fallan.
 - **Lección:** la simulación previa de CI (copia limpia, entorno mínimo, UTC) no atrapó esto porque no simulaba un equipo lento; la verificación real es la corrida en GitHub. Un runner de CI es un buen detector de carreras.
+
+## Nivel nuevo 6: memoria en tablas (pedido del usuario, en fases)
+El usuario pidió mover la memoria dispersa (`CLAUDE.md`, `CHANGELOG.md`, `BITACORA.md`) a tablas de `doctor.db` consultables por el MCP, en 4 fases con parada y OK al final de cada una. Reglas: sin `sudo`, pruebas en base temporal, la base real solo se toca en la migración (Fase 3) y con copia previa, y no se borra ningún markdown hasta que el usuario confirme la migración.
+
+### Fase 1: esquema y tools
+#### Decisiones
+- **`memoria.py`** concentra el esquema y la lógica de las cuatro tablas (`memoria`, `hechos_conocidos`, `bitacora`, `changelog`); `server.py` solo envuelve. Son 12 tools nuevas (ya son 35).
+- **Las tablas no están en `db.ESQUEMA`:** `db.conectar()` lo aplica en cada corrida del recolector (cada 15 min, con el código del proyecto), y la base real no debe cambiar antes de la migración. Las tablas se crean al **escribir** (`asegurar()`); las lecturas devuelven vacío si no existen. Una prueba verifica que ninguna lectura crea tablas.
+- **Búsqueda FTS5** (`unicode61 remove_diacritics 2`, tablas de contenido externo con triggers de sincronización) para `memoria` y también para `bitacora`. La consulta del usuario nunca llega cruda a FTS5: se reduce a palabras, cada una entre comillas y como prefijo; primero se exigen todas y, si no hay resultados, alcanza con alguna. Orden por relevancia (bm25) con más peso al tema/título.
+- **Hechos conocidos:** `agregar_hecho_conocido` y `retirar_hecho_conocido` dicen en el docstring que solo se usan si el usuario lo pide en la conversación, y dejan constancia en `acciones`. `vence` es AAAA-MM-DD (no puede ser pasada); un hecho vencido deja de contar como activo. `aplica_a` se compara por segmentos (`sdb` aplica a `smart_crc:sdb/errores_crc`, pero `fan1` no aplica a `fan10`).
+- **Nada se borra:** `olvidar` y `retirar_hecho_conocido` marcan como inactivo.
+- **El reporte semanal** (`claude -p`) no puede usar ninguna de las tools nuevas todavía: las de escritura y las de memoria quedaron en `HERRAMIENTAS_PROHIBIDAS`. La Fase 2 le permitirá solo `hechos_conocidos`.
+- **Desvíos pequeños respecto al pedido:** `changelog` tiene una columna opcional `titulo` (las entradas del archivo tienen título y no cabía en otro campo), `registrar_changelog` acepta ese `titulo` opcional y `recordar` acepta un `origen` opcional (por defecto `agente`).
+#### Pruebas
+- `tests/test_memoria.py`: esquema idempotente y perezoso, FTS sincronizado en insert/update/delete, búsqueda sin acentos ni mayúsculas, consultas hostiles (comillas, `NEAR`, inyección SQL, 5000 caracteres), validación de cada enumeración y largo, hechos por `aplica_a` y vencimiento, flujo del changelog y de punta a punta por las tools.
+#### Errores encontrados
+- FTS5 no admite un alias de tabla en `MATCH` ni en `bm25()`; se usa el nombre real de la tabla.
+#### Limitaciones
+- Todavía nada usa los hechos conocidos (Fase 2) y la base real no tiene las tablas (Fase 3).

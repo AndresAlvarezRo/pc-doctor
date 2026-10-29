@@ -42,6 +42,9 @@ HERRAMIENTAS_LECTURA = [  # todas de solo lectura; ninguna escribe en la base ni
 HERRAMIENTAS_PROHIBIDAS = [
     "limpiar_descargas_viejas", "restaurar_cuarentena", "marcar_hallazgo", "revision_seguridad", "ultimo_reporte", "reportes",
     "procesos_que_mas_consumen", "temperatura_cpu",
+    # memoria: la escribe un agente y podría arrastrar texto de los datos; las de escritura nunca, y las de lectura tampoco
+    "recordar", "olvidar", "buscar_memoria", "memoria_reciente", "agregar_hecho_conocido", "retirar_hecho_conocido",
+    "registrar_bitacora", "registrar_changelog", "resolver_changelog",
 ]
 INTEGRADAS_PROHIBIDAS = ["Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent"]
 
