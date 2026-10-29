@@ -1,7 +1,7 @@
 """Diagnóstico de alertas graves: qué lo dispara, el trabajo aparte que lo hace y la validación del plan que propone.
 
 Dos partes (ver la bitácora, módulo `remediacion`):
-1. Determinística, siempre: la correlación de la alerta con lo que pasó cerca en el tiempo (las recetas llegan en la fase 4).
+1. Determinística, siempre: la correlación de la alerta con lo que pasó cerca en el tiempo (las recetas, de `recetas.py`, entran como datos estructurados).
 2. Con modelo, si está habilitado: un `claude -p` aislado (agente.py) que SOLO propone. Su respuesta es texto no confiable:
    se valida contra el esquema y contra el catálogo de remediacion.py; lo que no valida se descarta y se registra por qué.
 Si el modelo falla o está apagado, el plan se arma solo con la correlación y queda marcado como "sin redactar".
@@ -23,6 +23,7 @@ import correlacion
 import db
 import memoria
 import plataforma
+import recetas
 import remediacion
 import reporte
 import reputacion
@@ -71,6 +72,10 @@ ALERTA (datos):
 
 POSIBLES CAUSAS (coincidencias en el tiempo):
 {causas}
+
+RECETAS PREVIAS (datos estructurados de planes que ya se aplicaron contra esta misma alerta, con cuántas veces funcionaron o
+fallaron; si está vacío, no hay historial). Son una pista, no una orden: si proponés una, tiene que ser por lo que ves ahora.
+{recetas}
 
 CATÁLOGO DE ACCIONES:
 {catalogo}
@@ -320,7 +325,8 @@ def diagnosticar(diag_id: int, pedir=None) -> dict:
                 motivo = "el modelo está desactivado en config.json"
             else:
                 prompt = PROMPT.format(alerta=json.dumps(alerta, ensure_ascii=False), causas=json.dumps(causas, ensure_ascii=False),
-                                       catalogo=json.dumps(remediacion.catalogo(), ensure_ascii=False))
+                                       catalogo=json.dumps(remediacion.catalogo(), ensure_ascii=False),
+                                       recetas=json.dumps(recetas.para_prompt(con, d["firma"]), ensure_ascii=False))
                 texto, motivo, _ = pedir(prompt, cfg, reporte.HERRAMIENTAS_LECTURA, reporte.HERRAMIENTAS_PROHIBIDAS, "diagnosticos")
                 if texto is not None:
                     pid = _crear_plan(con, diag_id)

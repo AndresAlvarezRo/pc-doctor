@@ -330,7 +330,7 @@ ESCRITURA = {"recordar", "olvidar", "agregar_hecho_conocido", "retirar_hecho_con
 
 def test_las_tools_nuevas_estan_registradas():
     reales = {t.name for t in server.mcp._tool_manager.list_tools()}
-    assert NUEVAS <= reales and len(reales) == 45
+    assert NUEVAS <= reales and len(reales) == 46
 
 
 def test_las_tools_funcionan_de_punta_a_punta(con):

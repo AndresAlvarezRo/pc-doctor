@@ -97,6 +97,7 @@ class Accion:
     deshacer: Callable | None = None  # (info, con) -> {"ok", "resumen"}; None si no es reversible
     como_deshacer: str = "no se puede deshacer"
     plataformas: tuple = ("linux",)
+    reutilizable: bool = True         # False si sus parámetros solo valen una vez (un pid): nunca entra en una receta
 
     @property
     def reversible(self) -> bool:
@@ -590,7 +591,7 @@ CATALOGO: dict[str, Accion] = {a.nombre: a for a in (
         parametros={"pid": Param("entero", "Número de proceso", minimo=2, maximo=4194304),
                     "nombre_esperado": Param("texto", "Nombre exacto del proceso", patron=r"[A-Za-z0-9._+:@ -]+")},
         riesgo="medio", preaprobable=False, efecto="el proceso ya no existe", simular=_proceso_simular,
-        ejecutar=_proceso_ejecutar, verificar=_proceso_verificar),
+        ejecutar=_proceso_ejecutar, verificar=_proceso_verificar, reutilizable=False),
 )}
 
 

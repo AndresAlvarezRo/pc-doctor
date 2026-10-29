@@ -129,6 +129,17 @@ CREATE TABLE IF NOT EXISTS planes (
     resultado TEXT             -- texto de este código: cómo terminó
 );
 CREATE INDEX IF NOT EXISTS idx_planes_diag ON planes(diagnostico_id);
+CREATE TABLE IF NOT EXISTS recetas (
+    id INTEGER PRIMARY KEY,
+    firma TEXT NOT NULL,       -- la de diagnosticos.firma: regla + componente, sin valores concretos
+    clave TEXT NOT NULL,       -- hash de las acciones (en orden, con sus parámetros): distingue recetas de una misma firma
+    acciones TEXT NOT NULL,    -- JSON: [{accion, parametros}] ya validadas; nada de texto del modelo
+    aplicada INTEGER NOT NULL DEFAULT 0,
+    funciono INTEGER NOT NULL DEFAULT 0,
+    fallo INTEGER NOT NULL DEFAULT 0,
+    primera_vez INTEGER NOT NULL, ultima_vez INTEGER NOT NULL,
+    UNIQUE (firma, clave)
+);
 CREATE TABLE IF NOT EXISTS cuarentena (
     id INTEGER PRIMARY KEY,
     ruta_original TEXT NOT NULL,

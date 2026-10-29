@@ -16,6 +16,7 @@ import alertas
 import db
 import diagnostico
 import memoria
+import recetas
 import remediacion
 from db import log
 
@@ -198,6 +199,7 @@ def verificar_pendientes(con) -> dict:
             con.execute("UPDATE planes SET estado='verificado', verificado_en=?, resultado=? WHERE id=?", (db.ahora(), texto, p["id"]))
             con.commit()
             _cerrar_changelog(con, f, texto)
+            _receta(con, p["id"], True)
             res["verificados"].append(p["id"])
         elif f["corridas"] >= maximo:
             motivo = ("la alerta sigue activa" if not resuelta else "") + ("; " if not resuelta and not cumplidos else "") + \
@@ -206,10 +208,18 @@ def verificar_pendientes(con) -> dict:
             con.execute("UPDATE planes SET estado='fallido', resultado=? WHERE id=?", (texto[:400], p["id"]))
             con.commit()
             _escalar(con, p["id"])
+            _receta(con, p["id"], False)
             res["fallidos"].append(p["id"])
         else:
             res["esperando"].append(p["id"])
     return res
+
+
+def _receta(con, plan_id: int, funciono: bool) -> None:
+    try:
+        recetas.registrar_resultado(con, plan_id, funciono)
+    except Exception as e:   # aprender es un extra: no puede tirar la verificación
+        log.warning("no pude actualizar la receta del plan #%s: %s", plan_id, e)
 
 
 def _cerrar_changelog(con, f, texto: str) -> None:

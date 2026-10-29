@@ -1699,3 +1699,20 @@ _2026-10-29 · limitacion_
 <!-- item {"id":436,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-29","resumen":"La sección «Diagnósticos y planes» compila pero no se probó en un navegador real","modulos":["dashboard","remediacion"],"archivos":["web/frontend/src/secciones/Planes.tsx"]} -->
 - Se compiló el frontend (`tsc` y `vite build`) y se probó toda la API, pero no se abrió el dashboard en un navegador: el flujo de clics (Ver el plan, Aplicar con confirmación, Rechazar, Deshacer) y el aspecto quedan por probar con un plan real.
   - Hay que reiniciar el servicio `pc-doctor-web` para que sirva la versión nueva.
+
+## Remediación asistida: Fase 4 (recetas)
+
+### Decisiones
+_2026-10-29 · decision_
+<!-- entrada {"id":123,"seccion":"Remediación asistida: Fase 4 (recetas)","titulo":"Decisiones","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":437,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Recetas: se crean o refuerzan solo con planes verificados; un fallido solo baja una que ya existe","modulos":["remediacion"],"archivos":["db.py","planes.py","recetas.py"],"prueba":"tests/test_recetas.py::test_un_plan_fallido_baja_la_confianza_de_la_receta_que_ya_existe"} -->
+- Tabla `recetas` (firma, clave = hash de las acciones en orden con sus parámetros, acciones JSON, aplicada/funciono/fallo, primera/última vez; UNIQUE firma+clave). `recetas.registrar_resultado` lo llama `planes.verificar_pendientes`: `verificado` crea o suma un éxito; `fallido` (alerta sigue tras N corridas) suma un fallo solo si la receta ya existe. Un fallo al ejecutar durante `aprobar` no cuenta: es del entorno, no de la receta.
+  - Solo se guardan nombre de acción y parámetros ya validados contra el catálogo. Nunca hipótesis, «porque», simulación ni pasos manuales.
+  - Una receta es madura con ≥2 éxitos y más éxitos que fallos (`recetas.es_madura`; la usará el nivel 2 de la fase 5).
+  <!-- item {"id":438,"tipo":"invariante","vigencia":"vigente","fecha":"2026-10-29","resumen":"Las recetas llegan al diagnóstico solo como datos estructurados, revalidadas contra el catálogo de hoy","modulos":["remediacion","reporte"],"archivos":["diagnostico.py","recetas.py","server.py"],"prueba":"tests/test_recetas.py::test_las_recetas_no_arrastran_la_hipotesis_ni_el_texto_de_diagnosticos_anteriores"} -->
+- `recetas.para_prompt(firma)` devuelve acciones, parámetros, veces aplicada/funcionó/falló y tasa; máximo 3, mejores primero. Cada receta se revalida con `remediacion.validar`; las que ya no valen se omiten. El prompt las rotula pista, no orden, y lo que el modelo proponga a partir de ellas vuelve a pasar por catálogo, simulación y aprobación.
+  - Nunca se pasa la hipótesis ni texto de diagnósticos anteriores (puede venir envenenado). La tool `recetas(firma)` es de lectura y está prohibida al `claude -p`.
+  **(invariante · prueba: tests/test_recetas.py::test_las_recetas_no_arrastran_la_hipotesis_ni_el_texto_de_diagnosticos_anteriores)**
+  <!-- item {"id":439,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"Acciones con parámetros de una sola vez (cerrar_proceso: pid) no entran a recetas","modulos":["remediacion"],"archivos":["recetas.py","remediacion.py"],"prueba":"tests/test_recetas.py::test_planes_sin_acciones_o_con_parametros_de_una_sola_vez_no_hacen_recetas"} -->
+- `Accion.reutilizable` (False en `cerrar_proceso`): un plan con alguna acción no reutilizable no genera receta, porque un pid no vuelve a valer y esa acción nunca es preaprobable.

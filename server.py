@@ -18,6 +18,7 @@ import db
 import memoria
 import plataforma
 import planes
+import recetas as recetas_mod
 import linea_base
 import remediacion
 import reputacion
@@ -317,6 +318,17 @@ def detalle_plan(id: int) -> dict:
     con = db.conectar()
     try:
         return planes.detalle(con, id) or {"error": f"No existe el plan {id}."}
+    finally:
+        con.close()
+
+
+@mcp.tool(name="recetas")
+def recetas_tool(firma: str | None = None) -> dict:
+    """Recetas aprendidas: qué acciones del catálogo resolvieron cada tipo de alerta (firma = regla + componente), con cuántas veces
+    se aplicaron, funcionaron y fallaron. Solo datos estructurados: se crean únicamente cuando un plan se verificó. Solo lectura."""
+    con = db.conectar()
+    try:
+        return {"recetas": recetas_mod.lista(con, firma)}
     finally:
         con.close()
 
