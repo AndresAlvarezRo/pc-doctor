@@ -1,4 +1,4 @@
-# Instalar pc-doctor en Windows (v1.0)
+# Instalar pc-doctor en Windows (v1.1.0)
 
 pc-doctor vigila la salud de tu PC: temperaturas, discos, memoria, programas raros y errores del sistema. Te avisa con una notificación cuando algo anda mal y tiene un panel que se abre en el navegador. **Todo queda en tu PC.** No hace falta ser administrador.
 
@@ -9,7 +9,7 @@ pc-doctor vigila la salud de tu PC: temperaturas, discos, memoria, programas rar
 
 ## Instalar
 1. Hacé clic derecho en el archivo `.zip` → **Extraer todo…** y elegí una carpeta (por ejemplo, Descargas).
-2. (Recomendado) Comprobá que el archivo no se dañó. En PowerShell: `Get-FileHash pc-doctor-Win-v1.0.zip` y comparalo con el número del archivo `.sha256`.
+2. (Recomendado) Comprobá que el archivo no se dañó. En PowerShell: `Get-FileHash pc-doctor-Win-v1.1.0.zip` y comparalo con el número del archivo `.sha256`.
 3. Abrí la carpeta extraída, hacé clic en la barra de direcciones, escribí `powershell` y apretá Enter.
 4. Escribí:
    ```
@@ -20,6 +20,16 @@ pc-doctor vigila la salud de tu PC: temperaturas, discos, memoria, programas rar
 Si algo falla, el instalador te dice qué pasó. Podés volver a correrlo: retoma sin duplicar nada.
 
 Para ver qué haría **sin cambiar nada**, agregá `-Simular` al final.
+
+## Actualizar desde una versión anterior
+No hace falta desinstalar. Extraé el `.zip` nuevo y corré el mismo `instalar.ps1`: detecta lo que ya tenés y **actualiza en el lugar**. Las novedades están en `NOVEDADES.md`.
+- Tus datos (base, valores aprendidos, hechos conocidos, changelog, memoria, `config.json`, `web_token`) **se conservan**. Antes de tocar nada se hace una copia de la base y de `config.json` en `%LOCALAPPDATA%\pc-doctor\copias\antes-de-<versión>-<fecha>`.
+- Los cambios en la base se aplican solos y se pueden repetir sin problema.
+- `config.json`: se agregan las opciones nuevas con su valor por defecto; las que ya tenías no se cambian.
+- Tu `CLAUDE.md`: se actualiza solo el bloque de pc-doctor (entre sus marcas); lo que escribiste fuera de él no se toca. Si habías editado a mano el bloque de la 1.0, se deja como está y el instalador te avisa.
+- Las tareas y el panel se detienen mientras se copia el código y se vuelven a registrar y arrancar al final.
+- Para ver el plan **sin cambiar nada** (versión actual → nueva, cambios en la base y opciones nuevas): `instalar.ps1 -Simular`.
+- Si algo falla a mitad de camino, volvé a correr `instalar.ps1`: retoma sin duplicar nada, y tu copia previa sigue en `copias\`.
 
 ## Qué instala y dónde
 | Qué | Dónde |

@@ -1776,3 +1776,44 @@ _2026-10-30 · decision_
 
 <!-- item {"id":447,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-30","resumen":"Sin banner, las críticas se envían con urgencia normal: GNOME 46 muestra las críticas aunque show-banners esté apagado","modulos":["alertas","windows"],"archivos":["alertas.py","plataforma/windows_notificaciones.py"],"prueba":"tests/test_pantalla.py"} -->
 - Verificado en el escritorio real (GNOME 46): con `show-banners=false` para pc-doctor, la notificación normal no salta y va a la bandeja, pero la de urgencia `critical` salta igual. El usuario no quiere alertas en pantalla, así que cuando el modo no quiere banner la urgencia se baja a normal (queda en la bandeja, no es transitoria). Se pierde que la crítica no se descarta sola y atraviesa No molestar. En Windows el toast tampoco se marca `reminder` sin popup.
+
+## Paquete de Windows 1.1
+
+### Paquete 1.1.0
+_2026-10-30 · decision_
+<!-- entrada {"id":130,"seccion":"Paquete de Windows 1.1","titulo":"Paquete 1.1.0","fecha":"2026-10-30","tipo":"decision"} -->
+
+<!-- item {"id":448,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-30","resumen":"Paquete 1.1.0: actualización en el lugar con actualizar.py (plan, respaldar, aplicar, claude-md)","modulos":["instalador","windows"],"archivos":["actualizar.py","empaquetar.py","instalador/NOVEDADES.md","instalador/instalar.ps1","instalador/versiones.toml","plantillas/CLAUDE.usuario.md","pyproject.toml","tests/test_actualizar.py"],"prueba":"tests/test_actualizar.py"} -->
+- `instalar.ps1` detecta la versión instalada (`version.txt`; sin él y con `collector.py` es la 1.0), muestra el plan con `-Simular`, para las tareas, copia la base (API de respaldo de SQLite) y `config.json` a `copias/antes-de-<versión>-<fecha>`, copia el código, aplica el esquema (`db.conectar`, idempotente), mezcla `config.json` (agrega lo que falta, nunca pisa) y vuelve a registrar tareas y MCP. `version.txt` se escribe al final: si algo falla, la próxima corrida repite todo.
+  - La lógica vive en `actualizar.py` para poder probarla en Linux; PowerShell solo ordena los pasos.
+  - `CLAUDE.md` del usuario: el bloque lleva marcas de inicio y fin; el de la 1.0 (sin marcas) se reemplaza solo si es idéntico al original (SHA-256); si lo editaron, se deja y se avisa.
+  - Probado contra el `.zip` real de la release `Win-v1.0` (se baja con `gh release download`): conserva datos, migra, mezcla config y es idempotente.
+
+### Remediación en Windows
+_2026-10-30 · decision_
+<!-- entrada {"id":131,"seccion":"Paquete de Windows 1.1","titulo":"Remediación en Windows","fecha":"2026-10-30","tipo":"decision"} -->
+
+<!-- item {"id":449,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-30","resumen":"Remediación en Windows: solo acciones con implementación allá; temporales y planes de energía con powercfg","modulos":["remediacion","windows"],"archivos":["diagnostico.py","remediacion.py","tests/falsos/powercfg","tests/test_remediacion_windows.py"],"prueba":"tests/test_remediacion_windows.py"} -->
+- El catálogo se filtra por plataforma (`remediacion.disponibles()`, también lo que ve el modelo). Windows: `limpiar_descargas_viejas`, `limpiar_temporales_usuario(dias)` (nueva, solo %TEMP% dentro del perfil, lo que está en uso se saltea), `limpiar_cache_uv`/`pip` (`%LOCALAPPDATA%`), `cambiar_perfil_energia` con powercfg y los GUID de los tres planes estándar (si el plan no existe, o el activo es del fabricante, no se toca).
+  - Fuera de Windows: caché de miniaturas (la bloquea el Explorador), `cerrar_proceso` (psutil termina a la fuerza en Windows y la acción promete no hacerlo) y servicios de systemd.
+
+### empaquetar.py falla ante bases, claves, pruebas, datos de pr
+_2026-10-30 · decision_
+<!-- entrada {"id":132,"seccion":"Paquete de Windows 1.1","titulo":"empaquetar.py falla ante bases, claves, pruebas, datos de pr","fecha":"2026-10-30","tipo":"decision"} -->
+
+<!-- item {"id":450,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-30","resumen":"empaquetar.py falla ante bases, claves, pruebas, datos de prueba o versión/NOVEDADES que no coinciden","modulos":["instalador"],"archivos":["empaquetar.py","tests/test_empaquetar.py"],"prueba":"tests/test_empaquetar.py"} -->
+- Además de EICAR, ejecutables, .ps1 sin BOM, rutas de esta PC y frontend viejo: extensiones .db/-wal/-shm/.sqlite/.pem/.key/.pfx/.p12/.crt/.log, archivos test_*, `datos_de_prueba.py`, `docs/`, `copias/`; exige `NOVEDADES.md`, `version.txt` y `actualizar.py`; `version.txt` y `versiones.toml` deben coincidir con `pyproject.toml` y el título de NOVEDADES nombrar la versión. El zip se llama `pc-doctor-Win-v<versión>.zip` (la versión sale de pyproject.toml).
+
+### La segmentación de la bitácora ya estaba en la 1.0 (tag Win-
+_2026-10-30 · nota_
+<!-- entrada {"id":133,"seccion":"Paquete de Windows 1.1","titulo":"La segmentación de la bitácora ya estaba en la 1.0 (tag Win-","fecha":"2026-10-30","tipo":"nota"} -->
+
+<!-- item {"id":451,"tipo":"nota","vigencia":"vigente","fecha":"2026-10-30","resumen":"La segmentación de la bitácora ya estaba en la 1.0 (tag Win-v1.0): la 1.1 trae remediación, notificaciones y la actualiz","modulos":["instalador","memoria"]} -->
+- Los commits de la bitácora en ítems son anteriores a `Win-v1.0`. El tag de la 1.0 es `Win-v1.0` (no `v1.0`); el de la 1.1 es `v1.1.0`.
+
+### La actualización de Windows (instalar.ps1) no corrió en un W
+_2026-10-30 · limitacion_
+<!-- entrada {"id":134,"seccion":"Paquete de Windows 1.1","titulo":"La actualización de Windows (instalar.ps1) no corrió en un W","fecha":"2026-10-30","tipo":"limitacion"} -->
+
+<!-- item {"id":452,"tipo":"limitacion","vigencia":"vigente","fecha":"2026-10-30","resumen":"La actualización de Windows (instalar.ps1) no corrió en un Windows real: solo parser, pruebas estáticas y actualizar.py","modulos":["instalador","windows"],"archivos":["instalador/instalar.ps1"]} -->
+- Sin probar en Windows: PararTodo (espera de procesos), registro de tareas tras actualizar, el JSON que devuelve actualizar.py leído con ConvertFrom-Json, el fallback de copia sin Python. Conviene correr `-Simular` y después actualizar la 1.0 real.

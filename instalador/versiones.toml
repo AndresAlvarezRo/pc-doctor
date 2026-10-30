@@ -2,6 +2,10 @@
 # extraer o ejecutar y se detiene si no coincide. Solo se aceptan direcciones https://github.com/.
 # Para actualizar una versión: cambiar version, url y sha256 a la vez, verificando el hash contra la página oficial del proyecto.
 
+[pc_doctor]
+# Versión de este paquete (la misma que pyproject.toml y version.txt; empaquetar.py falla si no coinciden). instalar.ps1 la compara con la instalada.
+version = "1.1.0"
+
 [uv]
 # Lo instala instalar.ps1 si falta uv. Zip oficial de Astral para Windows de 64 bits; el SHA-256 coincide con el .sha256 que publica GitHub
 # y con el que calculamos al descargarlo (verificado el 2026-10-29).

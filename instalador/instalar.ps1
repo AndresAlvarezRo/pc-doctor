@@ -7,6 +7,10 @@
     Muestra el plan, pide confirmación y deja pc-doctor funcionando: recolector, dashboard local (solo 127.0.0.1), reporte semanal y
     un acceso directo. Se puede volver a correr cuando quieras: actualiza lo que haya cambiado y no duplica nada.
 
+    Si ya hay una versión instalada, la ACTUALIZA en el lugar (no reinstala): conserva toda tu carpeta de datos (base, configuración,
+    memoria, token), hace antes una copia de la base y de config.json, aplica los cambios de esquema que hagan falta, agrega a
+    config.json las opciones nuevas sin tocar las que ya tenías y actualiza el bloque de pc-doctor de tu CLAUDE.md sin pisar lo tuyo.
+
     Lo único que necesita administrador es el ayudante opcional (SMART detallado, BitLocker, Secure Boot, temperaturas): está en
     habilitar-sensores.ps1, aparte, y este script nunca lo ejecuta.
 
@@ -15,7 +19,7 @@
 .PARAMETER Desinstalar
     Quita las tareas, los accesos directos y el programa. NO borra tus datos (base, configuración, reportes, cuarentena).
 .PARAMETER Simular
-    Muestra qué haría y no cambia nada.
+    Muestra qué haría y no cambia nada (si ya hay algo instalado: versión actual -> nueva, cambios de esquema y opciones nuevas).
 #>
 [CmdletBinding()]
 param(
@@ -36,7 +40,6 @@ $TareaRecolector = 'pc-doctor-recolector'
 $TareaReporte = 'pc-doctor-reporte'
 $TareaWeb = 'pc-doctor-web'
 $Tareas = @($TareaRecolector, $TareaReporte, $TareaWeb)
-$MarcaClaudeMd = '## Memoria de la PC (pc-doctor)'
 $Usuario = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 function Escribir([string]$texto, [string]$color = 'Gray') { Write-Host $texto -ForegroundColor $color }
@@ -134,12 +137,49 @@ function RutasAccesos {
              (Join-Path ([Environment]::GetFolderPath('Programs')) 'pc-doctor.lnk'))
 }
 
+# La versión instalada está en version.txt (la 1.0 no lo traía: con collector.py pero sin version.txt, es la 1.0).
+function VersionInstalada {
+    $f = Join-Path $Destino 'version.txt'
+    if (Test-Path -LiteralPath $f) { return ([IO.File]::ReadAllText($f)).Trim() }
+    if (Test-Path -LiteralPath (Join-Path $Destino 'collector.py')) { return '1.0' }
+    return $null
+}
+
+function VersionNueva { return ([IO.File]::ReadAllText((Join-Path $Origen 'version.txt'))).Trim() }
+
+# Corre actualizar.py (el trabajo de la actualización está ahí, probado en Linux) y devuelve su JSON como objeto, o $null si no pudo.
+function Actualizador([string]$python, [string]$carpetaDelScript, [string[]]$argumentos) {
+    if (-not (Test-Path -LiteralPath $python)) { return $null }
+    $r = Nativo $python (@((Join-Path $carpetaDelScript 'actualizar.py')) + $argumentos)
+    if ($r.Codigo -ne 0) { Aviso ("actualizar.py falló: " + $r.Salida.Trim()); return $null }
+    $linea = ($r.Salida -split "`n" | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1)
+    if (-not $linea) { return $null }
+    return ($linea | ConvertFrom-Json)
+}
+
+function PararTodo {
+    foreach ($n in $Tareas) {
+        if (Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue }
+    }
+    # lo que siga vivo desde la carpeta del programa (dashboard, recolector) bloquearía la copia de archivos
+    $limite = (Get-Date).AddSeconds(15)
+    do {
+        $vivos = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($Destino, [StringComparison]::OrdinalIgnoreCase) })
+        if ($vivos.Count -eq 0) { break }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $limite)
+    if ($vivos.Count -gt 0) { throw "Quedan procesos de pc-doctor en marcha ($($vivos[0].Name)). Cerralos y volvé a correr instalar.ps1." }
+    Bien 'tareas y dashboard detenidos'
+}
+
 # ---------------------------------------------------------------------------------------------------------------------------
 # -Verificar: solo lee
 # ---------------------------------------------------------------------------------------------------------------------------
 function VerificarTodo {
     $problemas = 0
     Titulo 'Verificación de pc-doctor'
+    $vi = VersionInstalada
+    if ($vi) { Bien "versión instalada: $vi" }
     if (Test-Path -LiteralPath (Join-Path $Destino 'collector.py')) { Bien "programa instalado en $Destino" } else { Falla "no está instalado en $Destino"; $problemas++ }
     $py = PythonDelPrograma
     if (Test-Path -LiteralPath $py) { Bien ("Python del programa: " + (& $py --version)) } else { Falla 'falta el entorno de Python (.venv)'; $problemas++ }
@@ -234,6 +274,20 @@ function ComprobarSistema {
 
 function MostrarPlan($v) {
     Titulo 'Plan'
+    $actual = VersionInstalada
+    $nueva = VersionNueva
+    if ($actual) {
+        if ([Version]$actual -gt [Version]$nueva) { throw "Tenés instalada la versión $actual, más nueva que esta ($nueva). No se baja de versión." }
+        if ($actual -eq $nueva) { Escribir "  Versión: $nueva (ya instalada: se repara y se vuelven a registrar las tareas)" 'White' }
+        else { Escribir "  ACTUALIZACIÓN: $actual -> $nueva, en el lugar. Tus datos no se tocan." 'White' }
+        $plan = Actualizador (PythonDelPrograma) $Origen @('plan', '--datos', $Datos, '--programa', $Origen, '--instalado', $Destino)
+        if ($plan) {
+            if ($plan.migraciones.Count -gt 0) { Escribir ('      cambios de esquema de la base: ' + ($plan.migraciones -join ', ')) } else { Escribir '      la base ya está al día' }
+            if ($plan.opciones_nuevas.Count -gt 0) { Escribir ('      opciones nuevas en config.json (con su valor por defecto): ' + ($plan.opciones_nuevas -join ', ')) } else { Escribir '      config.json ya tiene todas las opciones' }
+        } else { Escribir '      (no pude calcular los cambios de esquema y de configuración antes de actualizar; se aplican igual al actualizar)' }
+        Escribir "  Antes de tocar nada: copia de la base y de config.json en $Datos\copias\antes-de-$actual-<fecha>"
+        Escribir '  Se detienen las tareas y el dashboard mientras se copia el código, y después se vuelven a registrar y a arrancar.'
+    } else { Escribir "  Versión: $nueva (instalación nueva)" 'White' }
     Escribir "  Programa:  $Destino"
     Escribir "  Datos:     $Datos  (base, configuración y reportes; nunca se borran)"
     Escribir "  uv $($v['uv']['version']) (gestor de Python) y Python $($v['python']['version']): se instalan para tu usuario si faltan."
@@ -273,7 +327,7 @@ function CopiarPrograma {
     # lo compilado se reemplaza entero (si no, quedarían archivos viejos); el código se pisa archivo por archivo
     $dist = Join-Path $Destino 'web\frontend\dist'
     if (Test-Path -LiteralPath $dist) { Remove-Item -LiteralPath $dist -Recurse -Force }
-    Get-ChildItem -LiteralPath $Origen -Force | Where-Object { $_.Name -notin @('.venv', 'herramientas') } |
+    Get-ChildItem -LiteralPath $Origen -Force | Where-Object { $_.Name -notin @('.venv', 'herramientas', 'version.txt') } |
         ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $Destino -Recurse -Force }
     Bien "programa copiado a $Destino"
 }
@@ -284,7 +338,7 @@ function PrepararDatos {
     if (-not (Test-Path -LiteralPath $cfg)) {
         Copy-Item -LiteralPath (Join-Path $Origen 'config.ejemplo.json') -Destination $cfg
         Bien 'config.json creado (sin claves ni secretos)'
-    } else { Bien 'config.json ya existía: se deja como está' }
+    } else { Bien 'config.json ya existía: se conserva (las opciones nuevas se agregan después, sin tocar las tuyas)' }
     $tok = Join-Path $Datos 'web_token'
     if (-not (Test-Path -LiteralPath $tok)) {
         $bytes = New-Object byte[] 32
@@ -350,18 +404,18 @@ function ConfigurarClaude($uv) {
     if ($alta.Codigo -ne 0) { Aviso 'No pude registrar el servidor MCP (claude mcp add falló). Probá a mano con el comando de INSTALAR-WINDOWS.md.' }
     else { Bien 'servidor MCP pc-doctor registrado (para todos tus proyectos)' }
 
-    $plantilla = Join-Path $Origen 'plantillas\CLAUDE.usuario.md'
-    $dirClaude = Join-Path $env:USERPROFILE '.claude'
-    $md = Join-Path $dirClaude 'CLAUDE.md'
-    New-Item -ItemType Directory -Path $dirClaude -Force | Out-Null
-    $actual = ''
-    if (Test-Path -LiteralPath $md) { $actual = [IO.File]::ReadAllText($md) }
-    if ($actual.Contains($MarcaClaudeMd)) { Bien 'tu CLAUDE.md ya tiene las reglas de pc-doctor' }
+    # El bloque de pc-doctor lleva marcas de inicio y fin: se agrega si falta, se actualiza si cambió (también el de la 1.0, si no lo editaste)
+    # y lo que escribiste fuera de él no se toca. Si editaste el bloque de la 1.0 a mano, se deja como está y se avisa.
+    $md = Join-Path (Join-Path $env:USERPROFILE '.claude') 'CLAUDE.md'
+    $r = Actualizador (PythonDelPrograma) $Destino @('claude-md', '--datos', $Datos, '--programa', $Destino, '--claude-md', $md)
+    if (-not $r) { Aviso "No pude actualizar $md. Las reglas están en $Destino\plantillas\CLAUDE.usuario.md." }
     else {
-        $texto = [IO.File]::ReadAllText($plantilla)
-        $separador = if ($actual.Length -gt 0 -and -not $actual.EndsWith("`n")) { "`r`n`r`n" } elseif ($actual.Length -gt 0) { "`r`n" } else { '' }
-        [IO.File]::AppendAllText($md, $separador + $texto, (New-Object Text.UTF8Encoding($false)))
-        Bien "reglas de pc-doctor agregadas al final de $md (lo que ya tenías no se tocó)"
+        switch ($r.claude_md) {
+            'agregado' { Bien "reglas de pc-doctor agregadas al final de $md (lo que ya tenías no se tocó)" }
+            'actualizado' { Bien "bloque de pc-doctor actualizado en $md (lo que escribiste fuera del bloque no se tocó)" }
+            'igual' { Bien 'tu CLAUDE.md ya tenía el bloque de pc-doctor al día' }
+            'bloque_editado' { Aviso "El bloque de pc-doctor de $md tiene cambios tuyos: no lo toqué. Las reglas nuevas están en $Destino\plantillas\CLAUDE.usuario.md." }
+        }
     }
 }
 
@@ -409,7 +463,26 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'uv no pudo instalar Python.' }
     Bien "Python $($v['python']['version']) disponible"
 
+    $anterior = VersionInstalada
+    $nueva = VersionNueva
     Titulo '3. Programa'
+    if ($anterior) {
+        Escribir "  Actualizando de $anterior a $nueva en el lugar."
+        PararTodo
+        # copia previa de la base y de config.json, con el Python de la versión instalada y ANTES de tocar el código
+        if (Test-Path -LiteralPath (PythonDelPrograma)) {
+            $copia = Actualizador (PythonDelPrograma) $Origen @('respaldar', '--datos', $Datos, '--instalado', $Destino)
+            if ($copia -and $copia.copia) { Bien "copia previa en $($copia.copia)" }
+            elseif ($copia) { Bien 'no había base ni configuración que copiar' }
+            else { throw 'No pude hacer la copia previa de la base: no se toca nada. Revisá el mensaje de arriba.' }
+        } else {
+            # instalación dañada (sin su Python): con las tareas ya detenidas se copian los archivos tal cual
+            $carpeta = Join-Path $Datos ('copias\antes-de-' + $anterior + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            New-Item -ItemType Directory -Path $carpeta -Force | Out-Null
+            Get-ChildItem -LiteralPath $Datos -File | Where-Object { $_.Name -like 'doctor.db*' -or $_.Name -eq 'config.json' } | Copy-Item -Destination $carpeta
+            Bien "copia previa en $carpeta"
+        }
+    }
     CopiarPrograma
     Push-Location $Destino
     try {
@@ -420,6 +493,13 @@ try {
 
     Titulo '4. Datos'
     PrepararDatos
+    if ($anterior) {
+        $r = Actualizador (PythonDelPrograma) $Destino @('aplicar', '--datos', $Datos, '--programa', $Destino)
+        if (-not $r) { throw 'No pude aplicar los cambios de esquema y de configuración (mirá el mensaje de arriba). Tus datos y la copia previa están intactos.' }
+        if ($r.migraciones.Count -gt 0) { Bien ('base migrada: ' + ($r.migraciones -join ', ')) } else { Bien 'la base ya estaba al día' }
+        if ($r.opciones_nuevas.Count -gt 0) { Bien ('opciones nuevas agregadas a config.json: ' + ($r.opciones_nuevas -join ', ')) } else { Bien 'config.json ya tenía todas las opciones' }
+        if ($r.PSObject.Properties['aviso']) { Aviso $r.aviso }
+    }
 
     Titulo '5. Tareas programadas'
     RegistrarTareas
@@ -433,6 +513,8 @@ try {
     Titulo '8. Primera medición'
     PrimeraMedicion
 
+    # la versión se anota al final: si algo falló antes, la próxima corrida vuelve a actualizar (todo es idempotente)
+    Copy-Item -LiteralPath (Join-Path $Origen 'version.txt') -Destination (Join-Path $Destino 'version.txt') -Force
     OfrecerAyudante
     Titulo 'Listo'
     Escribir '  Para comprobar todo en cualquier momento:' 'Gray'

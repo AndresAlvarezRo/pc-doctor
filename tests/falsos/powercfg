@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+# Reemplazo de powercfg (Windows): el plan activo es el último `/setactive` del registro (o FAKE_PLAN, por defecto el equilibrado).
+# FAKE_PLANES=solo-equilibrado simula una PC sin los planes "alto rendimiento" y "ahorro"; FAKE_POWERCFG_FALLA=1 hace fallar /setactive.
+import json, os, sys
+a = sys.argv[1:]
+reg = os.environ["FAKE_LOG"]
+EQ, AHORRO, ALTO = "381b4222-f694-41f0-9685-ff5bb260df2e", "a1841308-3541-4fab-bc81-f71556f20b4a", "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+activo = os.environ.get("FAKE_PLAN", EQ)
+for linea in open(reg):
+    r = json.loads(linea)
+    if r.get("cmd") == "powercfg" and r["argv"][:1] == ["/setactive"]:
+        activo = r["argv"][1]
+open(reg, "a").write(json.dumps({"cmd": "powercfg", "argv": a}) + "\n")
+if a == ["/getactivescheme"]:
+    print(f"GUID del esquema de energía: {activo}  (Plan de ejemplo)")
+elif a == ["/list"]:
+    print("Esquemas de energía existentes (* Activo)\n-----------------------------------")
+    for g in ([EQ] if os.environ.get("FAKE_PLANES") == "solo-equilibrado" else [EQ, AHORRO, ALTO]):
+        print(f"GUID del esquema de energía: {g}  (Plan){' *' if g == activo else ''}")
+elif a[:1] == ["/setactive"] and os.environ.get("FAKE_POWERCFG_FALLA") == "1":
+    sys.stderr.write("acceso denegado\n"); sys.exit(1)

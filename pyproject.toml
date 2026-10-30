@@ -1,6 +1,6 @@
 [project]
 name = "pc-doctor"
-version = "0.1.0"
+version = "1.1.0"
 description = "Diagnóstico pasivo de la PC: recolector + servidor MCP"
 requires-python = ">=3.10"
 dependencies = [

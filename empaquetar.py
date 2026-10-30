@@ -1,4 +1,5 @@
-"""Arma el paquete de instalación para Windows: pc-doctor-Win-v<VERSION_PAQUETE>.zip y su .sha256, en la carpeta `paquetes/`.
+"""Arma el paquete de instalación para Windows: pc-doctor-Win-v<versión>.zip y su .sha256, en la carpeta `paquetes/`.
+La versión es la de pyproject.toml (también va en version.txt dentro del paquete, que instalar.ps1 compara para actualizar).
 
 Uso: `uv run --with pillow empaquetar.py` (Pillow solo hace falta para generar icono.ico). Antes hay que compilar el frontend
 (`bash web/construir.sh`): el paquete lleva `web/frontend/dist/` ya compilado porque la PC de destino no tiene Node.
@@ -9,7 +10,9 @@ ni nada de esta PC (base de datos, config.json, web_token, hechos conocidos, bit
   - algún archivo contiene la cadena de prueba EICAR o es un ejecutable de Windows (Defender pondría el zip entero en cuarentena),
   - algún .ps1 perdió la marca de orden de bytes UTF-8 (Windows PowerShell 5.1 lo leería como ANSI y rompería los acentos),
   - algún archivo de texto nombra una ruta absoluta de esta PC,
-  - el frontend compilado no existe o es más viejo que su código.
+  - el frontend compilado no existe o es más viejo que su código,
+  - hay una base de datos, un archivo de claves o certificados, datos de prueba o algo de las pruebas,
+  - falta NOVEDADES.md, o su título no nombra la versión del paquete.
 """
 
 import hashlib
@@ -22,7 +25,6 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent
 SALIDA = RAIZ / "paquetes"
-VERSION_PAQUETE = "1.0"                 # versión del paquete de Windows (aparte de la de pyproject.toml)
 FECHA_ZIP = (2026, 1, 1, 0, 0, 0)       # fija: el mismo contenido da siempre el mismo zip (y el mismo SHA-256)
 
 # El código que corre en producción (en la raíz del zip, con la misma estructura que el repo).
@@ -31,7 +33,9 @@ CARPETAS_CODIGO = ("plataforma",)
 SUELTOS = ("pyproject.toml", "uv.lock", "config.ejemplo.json", "web/api.py")
 EXTENSIONES_FRONTEND = {".ts", ".tsx", ".css", ".html", ".json", ".svg", ".png"}
 DE_INSTALADOR_A_RAIZ = "instalador"      # todo lo de instalador/ va en la raíz del zip
-NOMBRES_PROHIBIDOS = {"doctor.db", "config.json", "web_token", "datos", "BITACORA.md", "CHANGELOG.md"}
+NOMBRES_PROHIBIDOS = {"doctor.db", "config.json", "web_token", "datos", "BITACORA.md", "CHANGELOG.md", "datos_de_prueba.py", "datos_actualizar",
+                      "copias", "cuarentena", "paquetes", "docs"}
+EXTENSIONES_PROHIBIDAS = (".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3", ".pem", ".key", ".pfx", ".p12", ".crt", ".log")
 
 # Se arma por partes para que este archivo no se confunda con una muestra (y para que ningún antivirus lo marque).
 EICAR = ("X5O!P%@AP[4\\PZX54(P^)7CC)7}$" + "EICAR-STANDARD-ANTIVIRUS-TEST-FILE" + "!$H+H*").encode()
@@ -96,6 +100,7 @@ def reunir(raiz: Path = RAIZ) -> dict[str, bytes]:
     for p in _archivos(raiz / DE_INSTALADOR_A_RAIZ):
         sumar(p.relative_to(raiz / DE_INSTALADOR_A_RAIZ).as_posix(), p)
     res["icono.ico"] = icono_ico(raiz)
+    res["version.txt"] = (version(raiz) + "\n").encode()
     return res
 
 
@@ -106,6 +111,8 @@ def verificar(contenido: dict[str, bytes]) -> None:
         partes = set(Path(nombre).parts)
         if partes & NOMBRES_PROHIBIDOS or partes & {"tests", ".git", ".github", "scripts", "node_modules", "capturas", "venv", ".venv"}:
             problemas.append(f"{nombre}: no debe ir en el paquete")
+        if nombre.lower().endswith(EXTENSIONES_PROHIBIDAS) or Path(nombre).name.startswith("test_"):
+            problemas.append(f"{nombre}: es una base, un archivo de claves, un log o una prueba: no debe ir en el paquete")
         if EICAR in datos:
             problemas.append(f"{nombre}: contiene la cadena de prueba EICAR (Defender pondría el zip en cuarentena)")
         if datos[:2] == b"MZ":
@@ -115,10 +122,16 @@ def verificar(contenido: dict[str, bytes]) -> None:
         if not nombre.endswith((".ico", ".png")) and (m := RUTAS_DE_ESTA_PC.search(datos)):
             problemas.append(f"{nombre}: nombra una ruta de esta PC ({m.group().decode(errors='replace')})")
     for obligatorio in ("instalar.ps1", "habilitar-sensores.ps1", "ayudante.ps1", "versiones.toml", "lanzador.pyw", "INSTALAR-WINDOWS.md", "PROMPT-VERIFICACION.md",
-                        "config.ejemplo.json", "plantillas/CLAUDE.usuario.md", "icono.ico", "uv.lock", "pyproject.toml",
+                        "config.ejemplo.json", "plantillas/CLAUDE.usuario.md", "icono.ico", "uv.lock", "pyproject.toml", "NOVEDADES.md", "version.txt", "actualizar.py",
                         "web/frontend/dist/index.html", "collector.py", "server.py", "web/api.py"):
         if obligatorio not in contenido:
             problemas.append(f"{obligatorio}: falta")
+    if "pyproject.toml" in contenido and "version.txt" in contenido:
+        v = tomllib.loads(contenido["pyproject.toml"].decode("utf-8"))["project"]["version"]
+        if contenido["version.txt"].decode().strip() != v:
+            problemas.append(f"version.txt no coincide con pyproject.toml ({v})")
+        if "NOVEDADES.md" in contenido and v not in contenido["NOVEDADES.md"].decode("utf-8").splitlines()[0]:
+            problemas.append(f"NOVEDADES.md: el título no nombra la versión {v}")
     if problemas:
         raise ErrorDePaquete("No se generó el paquete:\n  - " + "\n  - ".join(problemas))
 
@@ -130,7 +143,7 @@ def construir(raiz: Path = RAIZ, salida: Path | None = None) -> tuple[Path, str]
     verificar(contenido)
     salida = salida or SALIDA
     salida.mkdir(parents=True, exist_ok=True)
-    destino = salida / f"pc-doctor-Win-v{VERSION_PAQUETE}.zip"
+    destino = salida / f"pc-doctor-Win-v{version(raiz)}.zip"
     with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for nombre in sorted(contenido):
             info = zipfile.ZipInfo(nombre, FECHA_ZIP)

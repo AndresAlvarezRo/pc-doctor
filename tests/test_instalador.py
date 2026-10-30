@@ -165,9 +165,10 @@ def test_versiones_toml_solo_tiene_secciones_y_claves_con_texto_entre_comillas()
 def test_cada_descarga_fijada_tiene_version_direccion_de_github_y_sha256():
     tomllib = pytest.importorskip("tomllib")
     d = tomllib.loads(VERSIONES.read_text(encoding="utf-8"))
-    assert set(d) == {"uv", "python", "librehardwaremonitor", "smartmontools", "pawnio"}
+    assert set(d) == {"pc_doctor", "uv", "python", "librehardwaremonitor", "smartmontools", "pawnio"}
     assert set(d["python"]) == {"version"}      # lo descarga uv, que verifica su propia integridad
-    for nombre, s in ((n, v) for n, v in d.items() if n != "python"):
+    assert set(d["pc_doctor"]) == {"version"}   # la versión de este paquete, no una descarga
+    for nombre, s in ((n, v) for n, v in d.items() if n not in ("python", "pc_doctor")):
         assert set(s) == {"version", "url", "sha256"} and re.fullmatch(r"[0-9a-f]{64}", s["sha256"]), nombre
         assert s["url"].startswith("https://github.com/") and s["version"] in s["url"], nombre
     assert d["librehardwaremonitor"]["sha256"] == "086d9f1b5a99e643edc2cfaaac16051685b551e4c5ac0b32a57c58c0e529c001"   # verificado contra el hash que publica GitHub
@@ -214,8 +215,8 @@ def test_instalar_no_borra_los_datos_ni_pisa_el_claude_md_del_usuario():
     c = codigo(INSTALAR)
     for m in re.finditer(r"Remove-Item[^\n]*", c):
         assert "$Datos" not in m.group() and "web_token" not in m.group(), m.group()
-    assert "WriteAllText($md" not in c and "Set-Content" not in c and "Out-File" not in c
-    assert "AppendAllText($md" in c and "$MarcaClaudeMd" in c             # agrega al final y solo si todavía no está
+    assert "WriteAllText($md" not in c and "Set-Content" not in c and "Out-File" not in c   # el CLAUDE.md lo maneja actualizar.py, solo dentro de sus marcas
+    assert "'claude-md'" in c and "actualizar.py" in c
 
 
 def test_instalar_usa_el_entorno_exacto_del_lock_y_sin_dependencias_de_desarrollo():
@@ -234,3 +235,31 @@ def test_las_tareas_de_instalar_coinciden_con_los_nombres_que_usa_el_codigo():
 def test_los_archivos_que_nombra_instalar_existen_en_el_repo():
     for nombre in ("lanzador.pyw", "verificar.py", "versiones.toml", "PROMPT-VERIFICACION.md", "INSTALAR-WINDOWS.md"):
         assert (DIR / nombre).is_file(), nombre
+
+
+# ---------- actualización en el lugar ----------
+
+def test_instalar_actualiza_en_el_lugar_con_copia_previa_y_sin_tocar_los_datos():
+    c = codigo(INSTALAR)
+    assert "function VersionInstalada" in c and "'1.0'" in c                       # la 1.0 no traía version.txt
+    # el orden: parar -> copia previa -> copiar el código -> migrar y mezclar config -> registrar tareas -> recién al final anotar la versión
+    orden = ["PararTodo", "'respaldar'", "CopiarPrograma\n", "'aplicar'", "RegistrarTareas\n", "Copy-Item -LiteralPath (Join-Path $Origen 'version.txt')"]
+    cuerpo = c[c.index("ComprobarSistema\n    $v = "):]
+    posiciones = [cuerpo.index(x) for x in orden]
+    assert posiciones == sorted(posiciones), orden
+    assert "'version.txt'" in c.split("function CopiarPrograma")[1].split("function PrepararDatos")[0]   # el copiado general la excluye
+    assert "no se baja de versión" in c.lower() or "No se baja de versión" in c
+
+
+def test_simular_muestra_la_actualizacion_sin_cambiar_nada():
+    c = codigo(INSTALAR)
+    plan = c.split("function MostrarPlan")[1].split("function InstalarUv")[0]
+    assert "'plan'" in plan and "ACTUALIZACIÓN" in plan and "migraciones" in plan and "opciones_nuevas" in plan
+    assert c.rindex("MostrarPlan $v") < c.rindex("if ($Simular)") < c.rindex("PararTodo")
+
+
+def test_la_version_es_la_misma_en_pyproject_versiones_y_el_paquete():
+    import tomllib
+    raiz = DIR.parent
+    v = tomllib.loads((raiz / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    assert tomllib.loads(VERSIONES.read_text(encoding="utf-8"))["pc_doctor"]["version"] == v

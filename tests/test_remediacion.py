@@ -18,7 +18,7 @@ from remediacion import Rechazo, aplicar, validar
 
 EN_USO_REAL = remediacion._en_uso
 ACCIONES = {"limpiar_cache_miniaturas", "limpiar_cache_uv", "limpiar_cache_pip", "limpiar_descargas_viejas",
-            "reiniciar_servicio_usuario", "cambiar_perfil_energia", "cerrar_proceso"}
+            "reiniciar_servicio_usuario", "cambiar_perfil_energia", "cerrar_proceso", "limpiar_temporales_usuario"}
 
 
 def fakes(nombre):
@@ -350,7 +350,9 @@ def test_el_plan_queda_anotado_en_la_ejecucion():
 
 def test_la_accion_de_otra_plataforma_se_rechaza(monkeypatch):
     monkeypatch.setattr(remediacion.plataforma, "NOMBRE", "windows")
-    assert aplicar("limpiar_cache_uv", {})["rechazada"]
+    assert aplicar("limpiar_cache_miniaturas", {})["rechazada"]            # en Windows no hay caché de miniaturas, ni procesos, ni servicios de systemd
+    assert aplicar("cerrar_proceso", {"pid": 99999, "nombre_esperado": "x"})["rechazada"]
+    assert aplicar("reiniciar_servicio_usuario", {"nombre": "x"})["rechazada"]
 
 
 def test_ninguna_accion_usa_shell_ni_sudo():

@@ -16,7 +16,7 @@ MODULOS: dict[str, list[str]] = {
     "actividad": ["actividad.py", "tests/test_actividad.py"],
     "correlacion": ["correlacion.py", "tests/test_correlacion.py"],
     "reporte": ["reporte.py", "agente.py", "tests/test_reporte.py"],
-    "remediacion": ["remediacion.py", "recetas.py", "diagnostico.py", "planes.py", "agente.py", "tests/test_remediacion.py", "tests/test_recetas.py", "tests/test_autonomia.py", "tests/test_diagnostico.py",
+    "remediacion": ["remediacion.py", "recetas.py", "diagnostico.py", "planes.py", "agente.py", "tests/test_remediacion.py", "tests/test_remediacion_windows.py", "tests/test_recetas.py", "tests/test_autonomia.py", "tests/test_diagnostico.py",
                     "tests/test_planes.py"],
     "alertas": ["alertas.py", "tests/test_notificaciones.py", "tests/test_pantalla.py"],
     "dashboard": ["web/**", "docs/img/**", "dashboard.py", "tests/test_api.py", "tests/test_api_vs_mcp.py", "tests/test_dashboard.py"],
@@ -27,7 +27,7 @@ MODULOS: dict[str, list[str]] = {
     "plataforma": ["plataforma/__init__.py", "plataforma/comun.py", "plataforma/linux.py", "tests/test_plataforma.py"],
     "windows": ["plataforma/windows*.py", "tests/test_windows_*.py"],
     "instalador": ["instalador/**", "empaquetar.py", "plantillas/**", "config.ejemplo.json", "tests/test_instalador.py", "tests/test_empaquetar.py",
-                   "tests/test_lanzador.py"],   # instalar.ps1, el ayudante, empaquetar.py (el zip de Windows) y sus plantillas
+                   "tests/test_lanzador.py", "actualizar.py", "tests/test_actualizar.py", "tests/datos_actualizar/**"],   # instalar.ps1, el ayudante, empaquetar.py (el zip de Windows) y sus plantillas
     "infra": ["systemd/**", "habilitar-sensores.sh", "pyproject.toml", "uv.lock"],
     "git": ["scripts/**", ".github/**", ".gitignore", "tests/conftest.py", "tests/ayudas.py", "tests/falsos/**", "tests/test_hook.py"],
     "sistema": [],      # lo que está fuera del repo (servicios de otros proyectos, overrides, sudoers, /etc): se resuelve por la ruta

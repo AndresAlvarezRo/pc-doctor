@@ -36,7 +36,10 @@ def repo(tmp_path, monkeypatch):
 def limpio() -> dict[str, bytes]:
     base = {n: b"x" for n in ("instalar.ps1", "habilitar-sensores.ps1", "ayudante.ps1", "versiones.toml", "lanzador.pyw", "INSTALAR-WINDOWS.md",
                               "PROMPT-VERIFICACION.md", "config.ejemplo.json", "plantillas/CLAUDE.usuario.md", "icono.ico", "uv.lock", "pyproject.toml",
-                              "web/frontend/dist/index.html", "collector.py", "server.py", "web/api.py")}
+                              "web/frontend/dist/index.html", "collector.py", "server.py", "web/api.py", "NOVEDADES.md", "version.txt", "actualizar.py")}
+    base["pyproject.toml"] = b'[project]\nversion = "1.1.0"\n'
+    base["version.txt"] = b"1.1.0\n"
+    base["NOVEDADES.md"] = "# pc-doctor 1.1.0: novedades\n".encode()
     for n in ("instalar.ps1", "habilitar-sensores.ps1", "ayudante.ps1"):
         base[n] = BOM + b"Write-Host 1"
     return base
@@ -57,10 +60,26 @@ def test_un_paquete_limpio_pasa():
     ({"web_token": b"abc"}, "no debe ir"),
     ({"tests/test_x.py": b"x"}, "no debe ir"),
     ({"BITACORA.md": b"x"}, "no debe ir"),
+    ({"web/datos_de_prueba.py": b"x"}, "no debe ir"),
+    ({"datos_actualizar/CLAUDE.usuario.1.0.md": b"x"}, "no debe ir"),
+    ({"respaldo.db-wal": b"x"}, "base, un archivo de claves"),
+    ({"cert/clave.pem": b"x"}, "base, un archivo de claves"),
+    ({"web/frontend/dist/error.log": b"x"}, "base, un archivo de claves"),
+    ({"test_algo.py": b"x"}, "base, un archivo de claves"),
+    ({"version.txt": b"1.0\n"}, "version.txt no coincide"),
+    ({"NOVEDADES.md": b"# pc-doctor 1.0\n"}, "no nombra la versión"),
 ])
+
 def test_verificar_rechaza(cambio, texto):
     c = {**limpio(), **cambio}
     with pytest.raises(empaquetar.ErrorDePaquete, match=texto):
+        empaquetar.verificar(c)
+
+@pytest.mark.parametrize("falta", ["NOVEDADES.md", "version.txt", "actualizar.py"])
+def test_verificar_exige_novedades_version_y_actualizador(falta):
+    c = limpio()
+    del c[falta]
+    with pytest.raises(empaquetar.ErrorDePaquete, match=f"{falta}: falta"):
         empaquetar.verificar(c)
 
 
@@ -159,5 +178,7 @@ def test_la_plantilla_de_claude_md_solo_tiene_reglas_de_usuario():
         assert pedido in t
     for ajeno in ("git", "pytest", "bitácora", "registrar_bitacora", "commit", "sudo"):
         assert ajeno not in t.lower()
-    assert "## Memoria de la PC (pc-doctor)" in t        # instalar.ps1 usa este encabezado para no agregarla dos veces
-    assert "## Memoria de la PC (pc-doctor)" in (RAIZ / "instalador" / "instalar.ps1").read_text(encoding="utf-8-sig")
+    assert "## Memoria de la PC (pc-doctor)" in t        # actualizar.py usa este encabezado para reconocer el bloque de la 1.0
+    assert t.count("<!-- pc-doctor:inicio") == 1 and t.count("<!-- pc-doctor:fin -->") == 1 and t.startswith("<!-- pc-doctor:inicio")
+    import actualizar
+    assert actualizar.ENCABEZADO in t and actualizar.MARCA_FIN in t
