@@ -42,6 +42,7 @@ def dashboard_activo():
 
 
 def test_boton_con_clic_abre_la_alerta_con_el_dashboard_activo(monkeypatch, dashboard_activo):
+    (db.DIR_DATOS / "config.json").write_text('{"mostrar_en_pantalla": "siempre"}')   # con banner la urgencia crítica se conserva
     monkeypatch.setenv("FAKE_CLIC", "1")
     assert alertas.notificar("pc-doctor: 1 valor(es) fuera de lo normal", "• GPU caliente", critica=True, seccion="alerta:4") is True
     sr = comandos("systemd-run")
@@ -131,6 +132,7 @@ def test_el_texto_con_caracteres_especiales_llega_intacto():
 
 
 def test_si_la_version_con_boton_falla_dentro_del_escucha_se_manda_la_simple(monkeypatch):
+    (db.DIR_DATOS / "config.json").write_text('{"mostrar_en_pantalla": "siempre"}')   # con banner la urgencia crítica se conserva
     monkeypatch.setenv("FAKE_ACCION_FALLA", "1")
     alertas.notificar("titulo O", "mensaje O", critica=True, seccion="alertas")
     assert esperar(sin_boton)

@@ -4,5 +4,6 @@
   "notificaciones": true,
   "salud": true,
   "umbrales": {},
-  "boton_dashboard": true
+  "boton_dashboard": true,
+  "mostrar_en_pantalla": "nunca"
 }

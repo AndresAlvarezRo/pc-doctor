@@ -7,6 +7,7 @@ una unidad transitoria propia (`systemd-run --user`) con un tope de vida, y se c
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -24,6 +25,102 @@ VIDA_ESCUCHA_S = 6 * 3600  # una notificación sin atender deja de escuchar tras
 MAX_ESCUCHAS = 10          # tope de escuchas vivos a la vez; pasado esto, las notificaciones salen sin botón
 
 
+MODOS_PANTALLA = ("nunca", "fuera_de_juego", "siempre")
+APP_DESKTOP = "pc-doctor"  # nombre del .desktop instalado (web/pc-doctor.desktop): GNOME agrupa las notificaciones por él
+ESQUEMA_APP = "org.gnome.desktop.notifications.application:/org/gnome/desktop/notifications/application/pc-doctor/"
+CLAVE_BANNERS = "show-banners"
+
+
+def modo_pantalla() -> str:
+    """Valor de `mostrar_en_pantalla` en config.json; cualquier valor inválido cae a "nunca" (lo menos molesto)."""
+    from reputacion import cargar_config  # import tardío: reputacion no depende de este módulo
+    modo = cargar_config(crear=False).get("mostrar_en_pantalla", "nunca")
+    if modo not in MODOS_PANTALLA:
+        log.warning("mostrar_en_pantalla inválido (%r): se usa 'nunca'", modo)
+        return "nunca"
+    return modo
+
+
+def banner_deseado() -> bool:
+    """True si hoy las notificaciones deberían saltar en pantalla, según `mostrar_en_pantalla` y si hay un juego en curso.
+    Si no se puede saber si hay juego, se asume que sí (lo que menos molesta)."""
+    modo = modo_pantalla()
+    if modo != "fuera_de_juego":
+        return modo == "siempre"
+    try:
+        import actividad  # import tardío
+        con = db.conectar()
+        try:
+            return not actividad.juego_en_curso(con)
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001  (nunca romper un aviso por esto)
+        log.warning("no pude saber si hay un juego en curso: %s", e)
+        return False
+
+
+def _ruta_estado() -> Path:
+    return db.DIR_DATOS / "banners.json"
+
+
+def _leer_estado() -> dict:
+    try:
+        return json.loads(_ruta_estado().read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _guardar_estado(estado: dict) -> None:
+    try:
+        _ruta_estado().parent.mkdir(parents=True, exist_ok=True)
+        _ruta_estado().write_text(json.dumps(estado) + "\n")
+    except OSError as e:
+        log.warning("no pude guardar banners.json: %s", e)
+
+
+def _banners_actuales() -> bool | None:
+    """Valor actual de show-banners de pc-doctor en GNOME (None si no se puede leer)."""
+    salida = db.ejecutar(["gsettings", "get", ESQUEMA_APP, CLAVE_BANNERS], timeout=5)
+    if salida is None or salida.strip() not in ("true", "false"):
+        return None
+    return salida.strip() == "true"
+
+
+def sincronizar_banners() -> dict:
+    """Linux: ajusta SOLO `show-banners` de pc-doctor según `mostrar_en_pantalla` (no toca lo global ni otras apps).
+
+    Respeta el cambio manual: se guarda en banners.json lo último que se escribió; si el valor actual es otro, lo cambió el
+    usuario desde GNOME y no se pisa hasta que cambie `mostrar_en_pantalla` en config.json. Solo escribe si hace falta."""
+    modo = modo_pantalla()
+    estado = _leer_estado()
+    actual = _banners_actuales()
+    if actual is None:
+        return {"accion": "sin_gnome"}
+    if estado.get("modo") != modo:  # opción nueva o cambiada: se retoma el control
+        mio = estado.get("escrito") if estado.get("escrito") == actual else None  # si lo dejé yo, sigue siendo mío (para restaurarlo)
+        estado = {"modo": modo, "escrito": mio, "manual": False}
+    elif estado.get("escrito") is not None and estado["escrito"] != actual:
+        estado["manual"] = True
+    elif estado.get("manual") and estado.get("escrito") == actual:
+        estado["manual"] = False
+    if estado.get("manual"):
+        _guardar_estado(estado)
+        return {"accion": "manual", "banners": actual}
+    deseado = banner_deseado()
+    if modo == "siempre" and estado.get("escrito") is None:
+        _guardar_estado(estado)  # "como hoy": si nunca se apagó nada, no se escribe nada
+        return {"accion": "nada", "banners": actual}
+    if deseado == actual:
+        estado["escrito"] = actual
+        _guardar_estado(estado)
+        return {"accion": "nada", "banners": actual}
+    if db.ejecutar(["gsettings", "set", ESQUEMA_APP, CLAVE_BANNERS, "true" if deseado else "false"], timeout=5) is None:
+        return {"accion": "fallo", "banners": actual}
+    estado["escrito"] = deseado
+    _guardar_estado(estado)
+    return {"accion": "escrito", "banners": deseado}
+
+
 def _entorno() -> dict:
     entorno = dict(os.environ)
     entorno.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{os.getuid()}/bus")
@@ -31,7 +128,9 @@ def _entorno() -> dict:
 
 
 def _comando(titulo: str, mensaje: str, critica: bool, con_boton: bool = False, seccion: str | None = None) -> list[str]:
-    cmd = ["notify-send", "-a", "pc-doctor", "-u", "critical" if critica else "normal", "-i", "dialog-warning"]
+    # app y desktop-entry iguales al .desktop instalado (GNOME las agrupa como una app propia); sin --transient: quedan en la bandeja
+    cmd = ["notify-send", "-a", "pc-doctor", f"--hint=string:desktop-entry:{APP_DESKTOP}", "-u", "critical" if critica else "normal",
+           "-i", "dialog-warning"]
     if con_boton:
         cmd.append(f"--action=ver={dashboard.texto_boton(seccion)}")  # implica esperar la respuesta; imprime "ver" si se hace clic
     return cmd + [titulo, mensaje]
@@ -88,6 +187,10 @@ def _notificar_linux(titulo: str, mensaje: str, critica: bool = False, seccion: 
     (config.json -> "boton_dashboard": true lo activa) hasta que se pruebe en el escritorio real. Funciona también desde un servicio de
     systemd de usuario: si falta la variable del bus de D-Bus, se arma.
     """
+    sincronizar_banners()  # el modo "fuera_de_juego" puede haber cambiado desde la última corrida
+    # GNOME 46 muestra en pantalla las críticas aunque show-banners esté apagado: sin banner se envían con urgencia normal
+    # (igual quedan en la bandeja, no son transitorias).
+    critica = critica and banner_deseado()
     if seccion:
         try:
             dashboard.url_de(seccion)  # solo se ofrece el botón para secciones válidas

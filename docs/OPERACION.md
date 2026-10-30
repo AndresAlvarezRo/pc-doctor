@@ -41,6 +41,7 @@ Opcional: `bash web/construir.sh` (compila el frontend; necesita Node, ver [Desa
 | `umbrales` | Cambia límites de las reglas, por ejemplo `{"temp_cpu": {"aviso": 80, "muestras": 1}}` |
 | `consulta_online` | Permite consultar la reputación de hashes sospechosos |
 | `malwarebazaar_key` | Clave de abuse.ch (vacía: ese proveedor queda apagado) |
+| `mostrar_en_pantalla` | `"nunca"` (defecto: las notificaciones van directo a la bandeja, sin banner), `"fuera_de_juego"` (sin banner mientras hay un juego en curso) o `"siempre"`. Ver «Notificaciones sin banner» |
 | `boton_dashboard` | Botón "Ver en el dashboard" en las notificaciones (apagado por defecto) |
 | `reporte` | `false` o un objeto con `habilitado`, `modelo`, `max_turns`, `timeout_s` y `claude` (ruta) |
 | `remediacion` | Autonomía y límites de la remediación (ver [REMEDIACION.md](REMEDIACION.md)) |
@@ -78,3 +79,8 @@ La base de datos no se borra; para empezar de cero eliminá `~/.local/share/pc-d
 - La detección de juegos se basa en la línea de comandos de los procesos: un programa de Windows bajo Wine que no sea un juego puede contar como juego.
 - La remediación no libera espacio en disco (cuarentena en el mismo disco): contra una alerta de espacio sus planes terminan `fallido`. «Empeoró» sin un hecho conocido compara con el diagnóstico anterior y no conoce el sentido de cada regla. Cualquier proceso con `pc-doctor` o `claude` en su línea de comandos está protegido contra `cerrar_proceso`.
 - El reporte semanal puede quedar sin redactar (plan B) si Claude no está disponible; texto malicioso en los datos del equipo puede terminar en el archivo del reporte (el modelo no puede ejecutar nada ni salir de pc-doctor).
+
+## Notificaciones sin banner
+`mostrar_en_pantalla` cambia solo cómo se muestran los avisos; se evalúan, registran y deduplican igual y quedan en el centro de notificaciones.
+- **Linux (GNOME):** las notificaciones se identifican como la app `pc-doctor` (`desktop-entry`, igual al `.desktop`), no son transitorias; GNOME 46 muestra en pantalla las críticas aunque los banners estén apagados, así que sin banner todo se envía con urgencia normal (queda en la bandeja); y, para "sin banner", se ajusta únicamente la clave `show-banners` de pc-doctor (nunca la configuración global, otras apps ni "No molestar"). El recolector la sincroniza en cada corrida (resolución de la detección de juegos: unos 15 min). Si cambiás esa clave a mano en Configuración de GNOME, pc-doctor lo respeta (`banners.json` en la carpeta de datos guarda lo último que escribió) hasta que cambies `mostrar_en_pantalla`.
+- **Windows:** el toast lleva `SuppressPopup` y va directo al Centro de actividades.

@@ -19,7 +19,7 @@ from db import ejecutar, log
 
 RUTA_CONFIG = db.DIR_DATOS / "config.json"
 CONFIG_BASE = {"consulta_online": True, "malwarebazaar_key": "", "notificaciones": True,
-               "salud": True, "umbrales": {}, "boton_dashboard": False}
+               "salud": True, "umbrales": {}, "boton_dashboard": False, "mostrar_en_pantalla": "nunca"}
 VIGENCIA_S = 7 * 86400          # un veredicto se reutiliza una semana antes de volver a consultar
 MAX_CONSULTAS_POR_CORRIDA = 3   # acota el tiempo del recolector; el resto queda para la próxima corrida
 MAX_BYTES_HASH = 512 * 1024 * 1024

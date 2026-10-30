@@ -1758,3 +1758,21 @@ _2026-10-29 · nota_
 
 <!-- item {"id":445,"tipo":"pendiente","vigencia":"vigente","fecha":"2026-10-29","resumen":"Validar los cuatro diagramas Mermaid del README con el parser oficial o viéndolos en GitHub","modulos":["git"],"archivos":["README.md"]} -->
 - Solo se chequearon con un lint propio (subgrafos cerrados, classDef definidos, comillas): no hay Mermaid instalado. Verlos en GitHub tras el push y corregir lo que falle.
+
+## Notificaciones sin banner
+
+### `mostrar_en_pantalla` (nunca/fuera_de_juego/siempre)
+_2026-10-30 · decision_
+<!-- entrada {"id":128,"seccion":"Notificaciones sin banner","titulo":"`mostrar_en_pantalla` (nunca/fuera_de_juego/siempre)","fecha":"2026-10-30","tipo":"decision"} -->
+
+<!-- item {"id":446,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-30","resumen":"`mostrar_en_pantalla` (nunca/fuera_de_juego/siempre): sin banner se ajusta solo show-banners de pc-doctor","modulos":["actividad","alertas","windows"],"archivos":["alertas.py","collector.py","docs/OPERACION.md","plataforma/windows_notificaciones.py","reputacion.py","tests/falsos/gsettings","tests/test_pantalla.py"],"prueba":"tests/test_pantalla.py"} -->
+- Linux: `alertas.sincronizar_banners()` (paso del recolector y antes de cada aviso) escribe únicamente la clave `show-banners` del esquema por aplicación de pc-doctor; nunca lo global, otras apps ni No molestar. `banners.json` en la carpeta de datos guarda lo último escrito: si el valor actual difiere, lo cambió el usuario y no se pisa hasta que cambie `mostrar_en_pantalla`. Las notificaciones llevan `-a pc-doctor` y `desktop-entry:pc-doctor`, no son transitorias.
+  - Windows: el toast lleva `SuppressPopup` según el mismo modo (`alertas.banner_deseado`).
+  - Defecto `nunca`. Límite: el juego se detecta con la resolución de la corrida (±15 min).
+
+### Sin banner, las críticas se envían con urgencia normal
+_2026-10-30 · decision_
+<!-- entrada {"id":129,"seccion":"Notificaciones sin banner","titulo":"Sin banner, las críticas se envían con urgencia normal","fecha":"2026-10-30","tipo":"decision"} -->
+
+<!-- item {"id":447,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-30","resumen":"Sin banner, las críticas se envían con urgencia normal: GNOME 46 muestra las críticas aunque show-banners esté apagado","modulos":["alertas","windows"],"archivos":["alertas.py","plataforma/windows_notificaciones.py"],"prueba":"tests/test_pantalla.py"} -->
+- Verificado en el escritorio real (GNOME 46): con `show-banners=false` para pc-doctor, la notificación normal no salta y va a la bandeja, pero la de urgencia `critical` salta igual. El usuario no quiere alertas en pantalla, así que cuando el modo no quiere banner la urgencia se baja a normal (queda en la bandeja, no es transitoria). Se pierde que la crítica no se descarta sola y atraviesa No molestar. En Windows el toast tampoco se marca `reminder` sin popup.

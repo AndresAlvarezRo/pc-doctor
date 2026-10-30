@@ -36,8 +36,10 @@ def xml_toast(titulo: str, mensaje: str, url: str | None, critica: bool = False,
             f"<text>{escape(mensaje)}</text></binding></visual>{acciones}</toast>")
 
 
-def script_toast(xml: str) -> str:
-    """Script de PowerShell que registra la identidad `pc-doctor` en HKCU (una vez) y muestra el toast."""
+def script_toast(xml: str, sin_popup: bool = False) -> str:
+    """Script de PowerShell que registra la identidad `pc-doctor` en HKCU (una vez) y muestra el toast.
+    Con `sin_popup` el toast no salta en pantalla (SuppressPopup): va directo al Centro de actividades."""
+    suprimir = "$t.SuppressPopup=$true\n" if sin_popup else ""
     xml64 = base64.b64encode(xml.encode("utf-8")).decode("ascii")
     return rf"""
 $k='HKCU:\Software\Classes\AppUserModelId\{AUMID}'
@@ -46,7 +48,8 @@ if(-not (Test-Path $k)){{ New-Item -Path $k -Force | Out-Null; New-ItemProperty 
 [void][Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime]
 $x=New-Object Windows.Data.Xml.Dom.XmlDocument
 $x.LoadXml([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{xml64}')))
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{AUMID}').Show([Windows.UI.Notifications.ToastNotification]::new($x))
+$t=[Windows.UI.Notifications.ToastNotification]::new($x)
+{suprimir}[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{AUMID}').Show($t)
 """
 
 
@@ -74,7 +77,10 @@ def notificar(powershell, titulo: str, mensaje: str, critica: bool, seccion: str
             log.warning("sección inválida para el botón: %r", seccion)
         if url and not forzar_boton and not boton_activo():
             url = None
-    if powershell(script_toast(xml_toast(titulo, mensaje, url, critica, dashboard.texto_boton(seccion) if seccion else TEXTO_BOTON)), 20) is None:
+    import alertas  # import tardío: alertas importa plataforma
+    sin_popup = not alertas.banner_deseado()  # mostrar_en_pantalla: nunca / fuera_de_juego / siempre
+    xml = xml_toast(titulo, mensaje, url, critica and not sin_popup, dashboard.texto_boton(seccion) if seccion else TEXTO_BOTON)
+    if powershell(script_toast(xml, sin_popup), 20) is None:
         log.warning("no pude mostrar la notificación")
         return False
     return True

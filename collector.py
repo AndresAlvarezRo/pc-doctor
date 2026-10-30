@@ -13,6 +13,7 @@ from pathlib import Path
 import psutil
 
 import actividad
+import alertas
 import db
 import diagnostico
 import linea_base
@@ -378,6 +379,7 @@ def main() -> int:
         ("metricas", guardar_metricas, (con, ws)),
         ("eventos", guardar_eventos, (con,)),
         ("actividad", actividad.registrar, (con,)),  # antes de salud: el contexto de las lecturas depende de esto
+        *((("banners", alertas.sincronizar_banners, ()),) if plataforma.actual().NOMBRE == "linux" else ()),  # tras actividad: usa si hay juego
         ("snapshot", snapshot_entorno, (con, ws)),  # antes de salud: así un aviso de esta corrida puede citar el cambio que acaba de pasar
         ("salud", salud.ciclo, (con,)),
         ("seguridad", seguridad.revisar_y_guardar, (con,)),
