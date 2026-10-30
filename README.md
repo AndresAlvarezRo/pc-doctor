@@ -1,281 +1,214 @@
 # pc-doctor
 
-Sistema de diagnóstico de la PC (pensado para Zorin OS / Ubuntu): mide la salud del equipo cada 15 minutos, **aprende qué es normal en esa PC**, avisa cuando algo se sale y permite consultarlo desde Claude Code o desde un dashboard web local. Todo queda en tu equipo.
+**Un médico de cabecera para tu PC, con memoria y un agente de IA.**
 
-Tres partes:
-1. **Recolector** (`collector.py`): lo corre un systemd user timer cada 15 minutos y al arrancar; tarda ~3 segundos. Guarda sensores, métricas, eventos, snapshots del entorno y hallazgos de seguridad en SQLite.
-2. **Servidor MCP** (`server.py`, FastMCP): 40 tools para Claude Code, entre ellas consultas de historial, estado en vivo, alertas, posibles causas y acciones acotadas.
-3. **Dashboard** (`web/`): app local en `http://localhost:8787` (solo `127.0.0.1`) con FastAPI y React, que muestra lo mismo que el MCP porque comparten las mismas funciones.
+![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![MCP](https://img.shields.io/badge/MCP-servidor%20para%20Claude%20Code-6B46C1)
+![FastAPI](https://img.shields.io/badge/FastAPI-dashboard%20local-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
 
-Los datos viven en `~/.local/share/pc-doctor/` (visible desde el proyecto como `datos/`). El registro detallado de cada decisión, error y limitación está en [`BITACORA.md`](BITACORA.md); lo que se observó del equipo, en [`CHANGELOG.md`](CHANGELOG.md).
+pc-doctor mide la salud de tu equipo, aprende qué es normal *en tu PC*, te avisa cuando algo se sale y te deja preguntarle a Claude qué pasó. Todo corre y se guarda en tu máquina.
 
 ## Qué hace
-- **Alertas de salud** de CPU, GPU, discos (incluido SMART), RAM, ventiladores, voltajes y errores del kernel, con notificaciones de escritorio agrupadas y sin ruido.
-- **Valores normales aprendidos:** línea base por componente y por contexto (reposo, carga o juego), anomalías y deriva lenta (polvo, pasta térmica, disco que se llena).
-- **Actividad:** detecta cuándo estás jugando (Steam, Proton, Wine, gamescope) y guarda las sesiones: "¿cómo estuvo la temperatura jugando a X?".
-- **Posibles causas:** al saltar una alerta, junta lo que pasó cerca (cambios de kernel, driver o paquetes, eventos, otras alertas, sesiones) y lo ordena; nunca afirma una causa.
-- **Seguridad:** mineros de criptomonedas, procesos fantasma, posibles keyloggers y puertos raros; consulta online solo el hash de ejecutables ya sospechosos.
-- **Reporte semanal** redactado por Claude con tools de solo lectura (con plan B sin modelo si falla).
-- **Dashboard** con tarjetas por componente, gráficos con la banda de lo normal, alertas, línea de tiempo, reportes y limitaciones; instalable como app (PWA) y con un botón "Ver en el dashboard" en las notificaciones.
-- **Limpieza segura de Descargas:** mueve a cuarentena, nunca borra, y se puede restaurar.
+- **Vigila el hardware** (CPU, GPU, discos, RAM, ventiladores, voltajes) y **aprende qué es normal** para tu PC: en reposo, con carga y jugando.
+- **Detecta lo raro:** mineros de criptomonedas, procesos fantasma, posibles keyloggers y puertos expuestos.
+- **Explica una alerta:** junta lo que cambió antes (un kernel, un driver, un paquete, otra alerta) y lo ordena, sin inventar causas.
+- **Te avisa en el escritorio**, sin ruido: las alertas se agrupan y no se repiten.
+- **Tiene un dashboard local** con el estado de cada componente, gráficos con la banda de lo normal y una línea de tiempo.
+- **Le podés preguntar a Claude** por tu PC: más de 40 tools le dan acceso a todo lo medido.
+- **Arma un reporte semanal** solo, con plan B si Claude no está disponible.
+- **Recuerda lo que ya sabés:** si declarás que un disco anda mal y lo tenés asumido, no te lo repite hasta que empeore.
+- **Propone arreglos y vos decidís:** ante una alerta grave arma un plan con acciones de un catálogo cerrado, lo aplica solo si lo aprobás y comprueba que funcionó.
 
-## Estado del proyecto
-Todo lo marcado como listo está probado (ver [Desarrollo](#desarrollo)); cómo se llegó a cada decisión está en la bitácora.
+## Así se usa
+Le hablás a Claude Code con el servidor MCP conectado. Respuestas de ejemplo, resumidas:
 
-| Etapa | Qué incluye | Estado |
-|---|---|---|
-| Base | Recolector, servidor MCP y limpieza de Descargas con cuarentena; hardware detectado sin depender del fabricante (AMD, Intel, NVIDIA) | Listo (el lector de `nvidia-smi` solo se probó con datos sintéticos) |
-| Seguridad | Mineros, procesos fantasma, keyloggers y puertos; reputación online solo de hashes sospechosos; alertas de escritorio | Listo |
-| Alertas de salud | Reglas con avisos sostenidos, histéresis y límites del propio hardware; voltajes y SMART habilitados | Listo |
-| Valores normales aprendidos | Línea base por contexto, anomalías y deriva, con registro diario permanente | Listo; madura con los días (anomalías ~2 días, deriva ~3 semanas, juego ~50 h de juego) |
-| Perfil por actividad | Contexto `juego`, sesiones y migración del historial | Listo |
-| Correlación | Posibles causas de una alerta y línea de tiempo | Listo |
-| Reporte semanal | `claude -p` con tools de solo lectura, plan B determinístico, timer los domingos a las 20:00 | Listo |
-| Dashboard, fases 0 a 3 | API de solo lectura, interfaz, servicio, lanzador y ícono en el escritorio, PWA, enlaces directos, notificaciones con botón (activo) y tool `abrir_dashboard` | Listo |
-| Dashboard, fase 4 | Acciones y gestión con token local y verificación de origen (marcar alertas, limpiezas sin root, restaurar, configuración) | **Pendiente** |
-| Dashboard, fase 5 | Botón "Diagnosticar con Claude" en cada alerta | **Pendiente** (opcional) |
-| Remediación asistida | Una alerta grave dispara un diagnóstico (Claude aislado, o solo correlación sin modelo), un plan de acciones de un catálogo cerrado, aprobación tuya, verificación y recetas aprendidas. Ver [Remediación asistida](#remediación-asistida) | Listo en pruebas con `claude` falso; **falta probarlo con una alerta real** y la sección del dashboard en un navegador |
-| Calidad | 1150 pruebas, hook pre-commit y GitHub Actions | Listo |
-| Cobertura de pruebas | El escáner de seguridad, la reputación online y el hilo principal del recolector no tienen pruebas permanentes | **Pendiente** |
+> **¿Por qué se calentó la GPU ayer?**
+> Llegó a 88 °C a las 22:10, unos grados por encima de lo normal jugando. Esa tarde se actualizó el driver de video y, a la misma hora, empezó una sesión de juego de dos horas. Es una coincidencia en el tiempo, no una causa probada: yo miraría primero el driver.
 
-**Lo que pc-doctor encontró en esta PC** (detalle en `CHANGELOG.md`): sectores defectuosos y errores CRC en el SSD `sdb`, un ventilador (`fan7`) con velocidad errática y temperaturas de 95-96 °C en CPU y GPU jugando.
+> **¿Hay algo raro corriendo?**
+> Nada marcado como malicioso. Hay dos puertos escuchando hacia la red local (un servicio de streaming de Steam y SSH), los dos conocidos desde hace semanas. Ningún proceso corre desde `/tmp`.
 
-## Estructura
-| Carpeta o archivo | Qué es |
-|---|---|
-| `collector.py`, `server.py` | El recolector y el servidor MCP |
-| `db.py`, `consultas.py` | Esquema y conexión (con modo de solo lectura); consultas compartidas entre el MCP y el dashboard |
-| `salud.py`, `linea_base.py`, `actividad.py`, `correlacion.py` | Sensores y reglas, valores normales aprendidos, juegos y sesiones, posibles causas |
-| `seguridad.py`, `reputacion.py` | Escaneo de seguridad y reputación de hashes |
-| `alertas.py`, `dashboard.py`, `reporte.py` | Notificaciones (con botón), abrir el dashboard, reporte semanal |
-| `remediacion.py`, `diagnostico.py`, `planes.py`, `recetas.py`, `agente.py` | Catálogo cerrado de acciones y su ejecutor; diagnóstico y plan; aprobar, aplicar, verificar y escalar; recetas; el `claude -p` aislado que comparten el reporte y el diagnóstico |
-| `web/` | API (`api.py`), frontend React (`frontend/`), datos de prueba, íconos y el script de compilación |
-| `systemd/` | Unidades de usuario: recolector, reporte semanal y dashboard |
-| `tests/`, `scripts/` | Suite de pruebas; hook pre-commit y su instalador |
-| `memoria.py`, `migrar_memoria.py`, `modulos.py` | Memoria en tablas de `doctor.db` (esquema, búsqueda, bitácora en ítems, exportación e importación de markdown), su migración desde los archivos y el mapa de archivos a módulos |
-| `BITACORA.md`, `CHANGELOG.md` | **Generados** desde las tablas `bitacora` y `changelog`: decisiones y errores del proyecto; observaciones y cambios del equipo. Son un respaldo completo: llevan los metadatos en comentarios HTML y `memoria.py --importar` reconstruye las tablas |
+> **¿Qué cambió en el sistema esta semana?**
+> Se actualizó el kernel el martes y se instalaron 14 paquetes, entre ellos el driver de video. Desde entonces el ventilador de la caja gira un 10 % más rápido en reposo.
+
+> **El disco de datos tiene sectores dañados, ya lo sé.**
+> Lo dejo anotado como conocido: no te lo voy a repetir mientras no empeore. Si aparece un sector más, te aviso.
+
+## El dashboard
+![Dashboard de pc-doctor con datos de ejemplo](docs/img/dashboard.jpg)
+
+*Captura con datos sintéticos.* Corre en `http://localhost:8787`, se puede instalar como app y las notificaciones pueden abrir directo la alerta.
+
+## Cómo funciona
+Los colores significan lo mismo en los tres diagramas:
+
+```mermaid
+flowchart LR
+    subgraph LEY["Leyenda"]
+        direction LR
+        L1["Agente de IA"]:::agente
+        L2["MCP"]:::mcp
+        L3["Código determinístico"]:::codigo
+        L4["Memoria"]:::memoria
+        L5[("Base de datos")]:::db
+        L6["Externo"]:::externo
+        L7(["Usuario"]):::usuario
+    end
+    classDef agente fill:#e9d5ff,stroke:#7e22ce,color:#1b1f24
+    classDef mcp fill:#bfdbfe,stroke:#1d4ed8,color:#1b1f24
+    classDef codigo fill:#bbf7d0,stroke:#15803d,color:#1b1f24
+    classDef memoria fill:#fde68a,stroke:#b45309,color:#1b1f24
+    classDef db fill:#e2e8f0,stroke:#475569,color:#1b1f24
+    classDef externo fill:#fed7aa,stroke:#c2410c,color:#1b1f24
+    classDef usuario fill:#f8fafc,stroke:#0f172a,stroke-width:3px,color:#1b1f24
+```
+
+### 1. El ciclo de trabajo
+Cada 15 minutos el recolector lee los sensores y compara con lo que es normal en tu PC. Si algo se sale, salta una alerta, se busca qué cambió antes y se te avisa. Si es grave, el modelo propone un plan, pero lo valida el código y lo aprobás vos.
+
+```mermaid
+flowchart TB
+    S["Sensores y sistema"]:::codigo --> R["Recolector<br/>cada 15 minutos"]:::codigo
+    R --> D[("doctor.db")]:::db
+    D --> L["Reglas y línea base<br/>¿es normal en esta PC?"]:::codigo
+    L -->|"algo se sale"| A["Alerta"]:::codigo
+    A --> C["Correlación<br/>qué cambió antes"]:::codigo
+    C --> N["Aviso en el escritorio"]:::codigo
+    N --> U(["Vos"]):::usuario
+    U --> W["Dashboard"]:::codigo
+    U --> Q["Preguntarle a Claude<br/>por el MCP"]:::agente
+    A -.->|"alerta grave"| G["Diagnóstico y plan<br/>el modelo propone"]:::agente
+    G --> V["Validación contra<br/>un catálogo cerrado"]:::codigo
+    V --> U
+    U -->|"aprobás"| E["Ejecutor"]:::codigo
+    E --> X["Verificación en las<br/>próximas corridas"]:::codigo
+    X --> M["Changelog y recetas<br/>lo que funcionó"]:::memoria
+    M -.->|"aprende"| G
+    M --> D
+    classDef agente fill:#e9d5ff,stroke:#7e22ce,color:#1b1f24
+    classDef codigo fill:#bbf7d0,stroke:#15803d,color:#1b1f24
+    classDef memoria fill:#fde68a,stroke:#b45309,color:#1b1f24
+    classDef db fill:#e2e8f0,stroke:#475569,color:#1b1f24
+    classDef usuario fill:#f8fafc,stroke:#0f172a,stroke-width:3px,color:#1b1f24
+```
+
+### 2. Qué corre dónde y qué sale de tu PC
+Todo vive en tu máquina. Hacia afuera solo cruzan tres cosas: la descarga de listas públicas de seguridad, el hash de un ejecutable que ya era sospechoso y lo que Claude lee cuando le preguntás algo o se genera el reporte.
+
+```mermaid
+flowchart LR
+    subgraph PC["Tu PC"]
+        T["systemd<br/>timer de 15 min y timer semanal"]:::codigo
+        R["Recolector"]:::codigo
+        D[("doctor.db")]:::db
+        API["API y dashboard<br/>solo 127.0.0.1"]:::codigo
+        MCP["Servidor MCP"]:::mcp
+        CC["Claude Code"]:::agente
+        CP["claude -p<br/>reporte y diagnóstico"]:::agente
+        T --> R
+        T --> CP
+        R --> D
+        D --> API
+        D --> MCP
+        CC --> MCP
+        CP --> MCP
+    end
+    subgraph NET["Internet"]
+        ANT["Anthropic"]:::externo
+        LIS["Listas de seguridad públicas<br/>Feodo Tracker y NoCoin"]:::externo
+        HASH["Consulta de reputación<br/>Team Cymru y CIRCL"]:::externo
+        GH["GitHub<br/>código y pruebas"]:::externo
+    end
+    U(["Vos"]):::usuario --> API
+    U --> CC
+    U -.->|"solo código, nunca datos"| GH
+    LIS -->|"se descargan"| R
+    R -->|"solo el hash de un<br/>ejecutable ya sospechoso"| HASH
+    CC <-->|"lo que Claude lee"| ANT
+    CP <-->|"lo que Claude lee"| ANT
+    classDef agente fill:#e9d5ff,stroke:#7e22ce,color:#1b1f24
+    classDef mcp fill:#bfdbfe,stroke:#1d4ed8,color:#1b1f24
+    classDef codigo fill:#bbf7d0,stroke:#15803d,color:#1b1f24
+    classDef db fill:#e2e8f0,stroke:#475569,color:#1b1f24
+    classDef externo fill:#fed7aa,stroke:#c2410c,color:#1b1f24
+    classDef usuario fill:#f8fafc,stroke:#0f172a,stroke-width:3px,color:#1b1f24
+```
+
+### 3. Dónde interviene la IA y dónde no
+**Medir, decidir y alertar no depende del modelo:** lo hace código que podés leer y probar. El modelo explica, redacta y propone. Se usa de dos maneras: interactivo (Claude Code, con memoria y reglas) y desatendido (`claude -p`, aislado y de solo lectura). Nada se ejecuta sin que vos apruebes.
+
+```mermaid
+flowchart LR
+    subgraph COD["Código determinístico: mide, decide y ejecuta"]
+        K1["Recolector y reglas"]:::codigo
+        K2["Línea base y correlación"]:::codigo
+        K3["Alertas y avisos"]:::codigo
+        K4["Ejecutor<br/>catálogo cerrado"]:::codigo
+    end
+    DB[("doctor.db")]:::db
+    MEM["Memoria<br/>hechos conocidos, bitácora, changelog"]:::memoria
+    MCP["Servidor MCP<br/>tools de consulta"]:::mcp
+    subgraph IA["Agente de IA: explica, redacta y propone"]
+        I["Interactivo<br/>Claude Code, con memoria y reglas"]:::agente
+        N["Desatendido<br/>claude -p, aislado y solo lectura"]:::agente
+    end
+    P["Reporte semanal<br/>y plan propuesto"]:::agente
+    U(["Vos"]):::usuario
+    K1 --> DB
+    K2 --> DB
+    K3 --> DB
+    DB --- MEM
+    DB --> MCP
+    MCP --> I
+    MCP --> N
+    I -->|"si se lo pedís"| MEM
+    N --> P
+    P --> U
+    U -->|"aprobás"| K4
+    classDef agente fill:#e9d5ff,stroke:#7e22ce,color:#1b1f24
+    classDef mcp fill:#bfdbfe,stroke:#1d4ed8,color:#1b1f24
+    classDef codigo fill:#bbf7d0,stroke:#15803d,color:#1b1f24
+    classDef memoria fill:#fde68a,stroke:#b45309,color:#1b1f24
+    classDef db fill:#e2e8f0,stroke:#475569,color:#1b1f24
+    classDef usuario fill:#f8fafc,stroke:#0f172a,stroke-width:3px,color:#1b1f24
+```
+
+## Privacidad y seguridad
+- **Todo queda en tu PC:** la base, los reportes y el dashboard. No hay ningún servicio de pc-doctor al que se suba nada.
+- **Online, casi nada:** solo se consulta el *hash* de un ejecutable que ya estaba marcado como sospechoso (nunca el archivo) y se descargan dos listas públicas de seguridad. Si le preguntás algo a Claude, lo que lee viaja a Anthropic como en cualquier conversación.
+- **Dashboard solo en `localhost`:** escucha en `127.0.0.1` y rechaza cualquier otro origen. Lo único que escribe (aprobar, rechazar o deshacer un plan) exige un token local.
+- **El agente desatendido solo lee:** `claude -p` corre sin herramientas de escritura y todo lo que ve se trata como dato no confiable, porque un nombre de proceso podría traer una orden disfrazada.
+- **Nada se borra y no hace falta `sudo`:** las limpiezas mueven a una cuarentena que se puede restaurar. El modelo propone, pero solo ejecuta código de pc-doctor, con parámetros validados y con tu aprobación.
 
 ## Instalación
-Requisitos: `uv`, `python3`, `lm-sensors` y `lshw` (opcionales: `nvidia-smi`, `flatpak`, `snap`).
+Necesitás `uv`, `lm-sensors` y `lshw`, y Claude Code si querés consultarlo por conversación.
 
 ```bash
-cd ~/Desktop/Practicas-IA/pc-doctor
-uv sync                                   # crea el entorno (.venv, visible como venv/)
-
-# Recolector, reporte semanal y dashboard (servicios de usuario de systemd)
-mkdir -p ~/.config/systemd/user
-cp systemd/*.service systemd/*.timer ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now pc-doctor.timer pc-doctor-reporte.timer pc-doctor-web.service
-
-# Servidor MCP en Claude Code
-claude mcp add pc-doctor -s user -- uv run --directory ~/Desktop/Practicas-IA/pc-doctor server.py
+git clone https://github.com/AndresAlvarezRo/pc-doctor && cd pc-doctor
+uv sync
+mkdir -p ~/.config/systemd/user && cp systemd/*.service systemd/*.timer ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now pc-doctor.timer pc-doctor-reporte.timer pc-doctor-web.service
+claude mcp add pc-doctor -s user -- uv run --directory "$PWD" server.py
 ```
 
-Verificación: `systemctl --user list-timers 'pc-doctor*'`, `systemctl --user status pc-doctor-web` y `claude mcp list`. Corrida manual del recolector: `uv run collector.py`.
+Funciona mejor en Linux (pensado para Ubuntu y derivados; probado en Zorin OS). Hay un paquete para Windows, pero todavía no se verificó en una PC real y la parte de seguridad y el reporte no están portados. La guía completa está en [docs/OPERACION.md](docs/OPERACION.md).
 
-Opcional: `bash web/construir.sh` (compila el frontend; necesita Node, ver [Desarrollo](#desarrollo)), el lanzador de `web/pc-doctor.desktop` (copiarlo a `~/.local/share/applications/`, con el ícono `web/frontend/public/icono.svg` en `~/.local/share/icons/hicolor/scalable/apps/pc-doctor.svg`) y `bash scripts/instalar-hooks.sh` si vas a desarrollar.
-
-## Dashboard
-- **Abrir:** desde el menú de aplicaciones ("pc-doctor"), el ícono del escritorio, `http://localhost:8787`, `uv run dashboard.py abrir [seccion]` o la tool `abrir_dashboard` desde Claude Code. Si el servicio estaba apagado, se arranca solo.
-- **Enlaces directos:** `/alerta/{id}`, `/hallazgo/{id}`, `/componente/{tipo}` y las secciones `#alertas`, `#reportes`, `#linea-de-tiempo`, `#limitaciones` y `#entorno`.
-- **Apagar:** `systemctl --user disable --now pc-doctor-web.service`. **Reiniciar tras recompilar:** `systemctl --user restart pc-doctor-web`.
-- **Seguridad:** escucha solo en `127.0.0.1`, rechaza cualquier `Host` que no sea `localhost:8787` o `127.0.0.1:8787` (contra DNS rebinding), acepta solo `GET` y abre la base en modo de solo lectura. Hoy no puede modificar nada; las acciones llegan con la fase 4, con token local.
-- **Notificaciones con botón:** "Ver en el dashboard" abre la alerta o el hallazgo del aviso. Se activa con `"boton_dashboard": true` en `config.json` (apagado por defecto); si el escritorio no lo soporta, la notificación sale igual, sin botón. Probar: `uv run alertas.py --probar-boton` (envía una notificación real).
-- **Instalar como app:** en Chrome o Edge, desde el menú del navegador ("Instalar pc-doctor").
-
-## Tools del MCP
-| Tool | Qué hace |
+## Stack
+| Pieza | Tecnología |
 |---|---|
-| `perfil_entorno()` | Último snapshot: SO, kernel, hardware, drivers |
-| `cambios_entorno(desde)` | Paquetes agregados, quitados o cambiados |
-| `espacio_disco()` | Espacio en vivo por partición |
-| `procesos_que_mas_consumen(n)` | Top de procesos en vivo |
-| `temperatura_cpu()` | Temperatura actual |
-| `historial(metrica, desde, contexto)` | Serie o resumen (mín, máx, promedio, tendencia) de una métrica o de **cualquier sensor** (por ejemplo `k10temp/Tctl`) |
-| `errores_recientes(horas)` | Errores del journal agrupados |
-| `limpiar_descargas_viejas(dias, simular)` | Mueve a cuarentena archivos viejos de Descargas (por defecto solo simula) |
-| `restaurar_cuarentena(id)` | Devuelve un archivo a su ruta original |
-| `revision_seguridad()` | Escaneo en vivo: mineros, procesos fantasma, posibles keyloggers, puertos y conexiones |
-| `hallazgos_seguridad(estado, dias)` | Hallazgos guardados, por severidad |
-| `marcar_hallazgo(id, estado)` | Marca un hallazgo como revisado o falso positivo |
-| `puertos_en_escucha()` | Puertos accesibles desde la red, en vivo |
-| `estado_salud()` | Sensores en vivo contra los valores normales, y lo que no se puede medir |
-| `alertas_salud(solo_activas, dias)` | Alertas de salud registradas por el recolector (con su `id`) |
-| `linea_base_aprendida(categoria, contexto)` | Lo que pc-doctor aprendió como normal de cada componente (reposo, carga y juego) |
-| `medias_diarias(sensor, dias)` | Registro diario permanente (media, mínimo, máximo) de un sensor |
-| `sesiones_actividad(tipo, dias)` | Sesiones de juego, con las temperaturas máximas de CPU y GPU de cada una |
-| `linea_de_tiempo(desde, hasta)` | Todo lo registrado en orden cronológico: entorno, eventos, alertas, seguridad, sesiones y acciones |
-| `correlacionar(alerta_id)` | Posibles causas de una alerta o de un hallazgo (`hallazgo:N`); coincidencias, no causas demostradas |
-| `ultimo_reporte()` y `reportes(n)` | El último reporte semanal y el historial |
-| `abrir_dashboard(seccion)` | Abre el dashboard en el navegador |
-| `diagnosticos(dias)`, `planes(estado)`, `detalle_plan(id)`, `recetas(firma)` | Lo diagnosticado y su plan (las dos primeras, sin el texto del modelo), un plan completo (texto no confiable) y lo aprendido |
-| `aprobar_plan(id)`, `rechazar_plan(id)` | Aplican o descartan un plan. **Solo si el usuario lo pide en la conversación**; nunca los usa el `claude -p` |
-| `recordar(tema, texto, tipo)`, `buscar_memoria(consulta, n)`, `memoria_reciente(n)`, `olvidar(id)` | Memoria del agente (hechos, decisiones, preferencias, observaciones) con búsqueda de texto completo; `olvidar` marca como inactivo, no borra |
-| `hechos_conocidos(aplica_a)`, `agregar_hecho_conocido(...)`, `retirar_hecho_conocido(id)` | Lo que el usuario declaró como sabido. **Solo se agregan o retiran si el usuario lo pide en la conversación** |
-| `registrar_bitacora(...)`, `buscar_bitacora(consulta, n)` | Registra un ítem de la bitácora (tipo, módulos, resumen de una línea) y busca sobre los ítems (devuelve resúmenes) |
-| `contexto(archivo, modulo, tipo, incluir_superadas, n)`, `detalle_bitacora(id)`, `pendientes(modulo)`, `marcar_superada(id, reemplazada_por, motivo)` | La bitácora por tarea: resúmenes de lo vigente (las invariantes siempre), el texto completo de un ítem, los pendientes y el reemplazo de una decisión vieja. Ninguna entra al reporte semanal |
-| `registrar_changelog(...)`, `resolver_changelog(id, detalle)`, `changelog_abierto()` | Historia de la PC: errores, soluciones y cambios, con su estado |
-| `registrar_identidad(campo, valor)` | Filas de "Identidad actual" que no se calculan solas (energía, red expuesta, sensores extra, Node.js); se exportan al changelog |
+| Recolector, reglas y línea base | Python 3.10+, psutil, SQLite |
+| Servidor MCP | SDK oficial de MCP (FastMCP), 46 tools |
+| Dashboard | FastAPI, React 19, TypeScript, Vite y Recharts |
+| Agente | Claude Code y `claude -p` |
+| Tareas programadas | systemd (timers de usuario) |
+| Pruebas | pytest y GitHub Actions |
 
-## Memoria
-La memoria vive en cuatro tablas de `doctor.db` y se consulta por el MCP, en vez de cargarse entera en cada sesión desde archivos:
+## Próximamente
+- Verificar el paquete de Windows en una PC real y portar la parte de seguridad y el reporte.
+- Cambiar el nivel de autonomía y las acciones preaprobadas desde el dashboard, hoy solo desde `config.json`.
+- Más acciones en el dashboard (marcar alertas, restaurar la cuarentena) y una pantalla de configuración.
+- Probar la remediación asistida con alertas reales y sumar pruebas del escáner de seguridad.
 
-| Tabla | Qué guarda |
-|---|---|
-| `memoria` | Lo que el agente aprende (hecho, decisión, preferencia u observación), con `origen` (agente o usuario) y búsqueda de texto completo (FTS5, sin distinguir acentos). Personal: no se exporta |
-| `hechos_conocidos` | Lo que **el usuario** declara como sabido, con a qué se aplica (`aplica_a`: sensor, disco, alerta) y una fecha de revisión opcional. Personal: no se exporta |
-| `bitacora` | Agrupación de la bitácora del proyecto: sección, título, fecha y tipo |
-| `bitacora_items` (+ `bitacora_item_modulo`, `bitacora_item_archivo`) | Cada decisión, error, limitación, prueba, pendiente, nota o invariante: tipo, vigencia (vigente, superada, histórica), reemplazo y motivo, resumen de una línea, texto original, prueba que lo protege, módulos y archivos. Índice de texto completo sobre resumen y contenido |
-| `changelog` | Errores, soluciones y cambios de la PC, con estado (abierto o resuelto) |
-| `identidad_manual` | Las filas de "Identidad actual" que no se pueden recalcular (energía, red expuesta, sensores extra, Node.js). Es identidad de la PC, no datos personales: **sí se exporta** |
-
-**Un hecho conocido silencia lo conocido, no lo nuevo.** Una alerta cubierta por un hecho no se vuelve a notificar ni a recomendar en el reporte semanal mientras no empeore (sube la severidad, o el valor se aleja de lo normal: cualquier aumento en los contadores de SMART, más del 5 % en el resto). Si el hecho vence, deja de silenciar y aparece en el reporte como "para revisar". El dashboard muestra el hecho junto a cada alerta cubierta y tiene las secciones "Hechos conocidos" y "Changelog" (solo lectura).
-
-**Exportar:** `BITACORA.md` y `CHANGELOG.md` se generan desde las tablas con `uv run memoria.py --exportar` (con `--destino CARPETA` para ver el resultado sin pisar los archivos). No se editan a mano: el hook pre-commit los regenera y los agrega al commit. La "Identidad actual" del changelog se calcula del último snapshot de entorno y su hardware, más las filas de `identidad_manual`. Las tablas se crean al escribir por primera vez; las lecturas nunca las crean.
-
-**Módulos:** `modulos.py` mapea cada archivo del repo a un módulo (salud, seguridad, actividad, correlacion, reporte, alertas, dashboard, memoria, datos, mcp, infra, git; `sistema` es lo que está fuera del repo). Una prueba falla si un archivo de código no cae en ninguno. `contexto(archivo=...)` usa ese mapa.
-
-**Respaldo completo:** cada entrada, cada ítem, cada entrada del changelog y cada fila de identidad manual llevan un comentario HTML de una línea con sus metadatos (JSON; GitHub no lo muestra). Las marcas `**(invariante)**` y `(superada por #N: motivo)` son visibles. `uv run memoria.py --importar [--origen CARPETA]` reconstruye `bitacora`, `bitacora_items` y sus relaciones desde `BITACORA.md` y `changelog` e `identidad_manual` desde `CHANGELOG.md`, con los mismos ids de ítems; se niega si esas tablas ya tienen datos, salvo `--reemplazar` (hace antes una copia `doctor.db.antes-de-importar-*`). Exportar, importar y volver a exportar da archivos idénticos byte a byte; la excepción es la parte calculada de la "Identidad actual", que sale del último snapshot y no está en el markdown. `memoria` y `hechos_conocidos` no se exportan.
-
-**Migrar** (una sola vez, ya hecho en esta PC): `uv run migrar_memoria.py` simula y `--ejecutar` escribe; exige una copia previa de la base (`doctor.db.antes-de-memoria-*`) y que las tablas estén vacías. La división de la bitácora en ítems se hizo con `uv run migrar_memoria.py --items PROPUESTA.json [--ejecutar]` (copia `doctor.db.antes-de-items-*`; valida que los ítems de cada entrada, unidos, den exactamente su texto).
-
-## Alertas de salud
-Cada corrida lee los sensores (se guardan 30 días en la tabla `lecturas`) y los compara con unas reglas de valores normales; si algo se sale, envía **una** notificación de escritorio agrupada.
-
-- **Qué vigila:** temperatura de CPU, GPU, NVMe, discos SATA y placa; ventiladores; voltaje de GPU y de la placa; uso sostenido de CPU y GPU; VRAM; RAM y swap; carga; espacio libre, saturación y solo-lectura de discos; SMART (sectores realocados, pendientes e incorregibles, errores CRC, desgaste); y errores del kernel (disco, GPU, memoria agotada, limitación térmica).
-- **Sin ruido:** el aviso salta tras varias lecturas seguidas (el crítico, con una sola), no se repite hasta 6 h después (2 h si es crítico) y las resueltas se cierran en silencio. Un conector sin ventilador (siempre 0 RPM) y las entradas de temperatura sin sensor real se ignoran.
-- **Ajustar límites:** en `datos/config.json`, por ejemplo `"umbrales": {"temp_cpu": {"aviso": 80, "muestras": 1}}`. `"salud": false` apaga estas alertas.
-- **Qué no se puede medir** se ve en `estado_salud()` y en la sección "Limitaciones y sensores" del dashboard. Los voltajes de la placa y el SMART se habilitan con `habilitar-sensores.sh` (ver más abajo).
-
-## Valores normales aprendidos
-Además de límites fijos, pc-doctor aprende qué es normal **en tu PC**, por componente y por contexto (reposo, carga o juego):
-
-- `lecturas` guarda 30 días de lecturas; `lecturas_diarias` guarda para siempre la media, el mínimo y el máximo de cada día; `linea_base` guarda lo normal de hoy (mediana, media, p95 y p99).
-- **Contexto:** cada lectura se etiqueta según lo que hace el equipo. Una GPU a 80 °C jugando es normal; en reposo, no.
-- **Anomalía:** un valor muy fuera de lo habitual dos lecturas seguidas avisa (nunca como crítico). Se activa cuando un sensor tiene unas 200 muestras en ese contexto (~2 días en reposo; en juego, unas 50 horas de juego).
-- **Deriva:** si en reposo la temperatura sube 6 °C, un ventilador gira 30 % más o el disco pierde 8 puntos libres frente al mes anterior, avisa (como mucho una vez por semana). Necesita ~3 semanas de datos.
-- Consultar: `linea_base_aprendida()` y `medias_diarias('k10temp/Tctl')`, o el gráfico de cada sensor en el dashboard (con la banda de lo normal detrás).
-
-## Actividad y posibles causas
-- **Juegos:** se detectan por la línea de comandos de los procesos (el cliente de Steam abierto no cuenta; sí un juego en ejecución, bajo Proton, Wine o nativo). Las firmas están en un solo lugar (`FIRMAS` en `actividad.py`). Las sesiones se consultan con `sesiones_actividad()`.
-- **Posibles causas:** `correlacionar(id)` (o el botón "Ver posibles causas" del dashboard) lista lo que ocurrió cerca de una alerta, por cercanía y afinidad. Las notificaciones agregan una línea "posible relación" solo si hay un cambio de entorno claramente afín en las últimas 24 h.
-
-## Reporte semanal
-Los domingos a las 20:00 (`pc-doctor-reporte.timer`, y al encender la PC si estaba apagada) se genera `datos/reportes/AAAA-MM-DD.md`: estado general, tendencias contra la línea base, anomalías, cambios de entorno, seguridad, SMART, sesiones de juego y recomendaciones.
-
-- Lo redacta `claude -p` con **solo** tools de lectura de pc-doctor; sin herramientas integradas, sin web ni los demás MCP de la cuenta. El archivo lo escribe `reporte.py`, no el modelo, y todo dato del equipo se declara no confiable en el prompt.
-- Si Claude falla (sin sesión, sin red, límite de uso, tiempo agotado), sale un reporte determinístico con los mismos datos, y el encabezado lo dice. El reporte nunca queda sin generarse.
-- Consultar: `ultimo_reporte()`, `reportes(n)` o la sección "Reportes y diagnósticos" del dashboard. Apagar: `"reporte": false` en `config.json` o `systemctl --user disable --now pc-doctor-reporte.timer`.
-
-## Configuración
-`datos/config.json` (se crea solo; las claves que falten usan su valor por defecto):
-
-| Clave | Para qué |
-|---|---|
-| `notificaciones` | Apaga todas las notificaciones de escritorio con `false` |
-| `salud` | Apaga las alertas de salud con `false` |
-| `umbrales` | Cambia límites de las reglas, por ejemplo `{"temp_cpu": {"aviso": 80, "muestras": 1}}` |
-| `consulta_online` | Permite consultar la reputación de hashes sospechosos |
-| `malwarebazaar_key` | Clave de abuse.ch (vacía: ese proveedor queda apagado) |
-| `boton_dashboard` | Botón "Ver en el dashboard" en las notificaciones (apagado por defecto) |
-| `reporte` | `false` o un objeto con `habilitado`, `modelo`, `max_turns`, `timeout_s` y `claude` (ruta) |
-| `remediacion` | Autonomía y límites de la remediación (abajo) |
-| `correlacion` | `horas_antes` y `horas_despues` de la ventana de posibles causas (48 y 2 por defecto) |
-
-## Remediación asistida
-Cuando salta una alerta grave (crítica nueva, una que empeoró, un hallazgo malicioso o un cambio de SMART), pc-doctor la diagnostica en un trabajo aparte (el recolector no espera) y arma un plan. **El modelo solo propone; lo ejecuta el código de pc-doctor.**
-
-1. **Catálogo cerrado.** Solo existen estas acciones, con parámetros validados: `limpiar_cache_miniaturas`, `limpiar_cache_uv`, `limpiar_cache_pip`, `limpiar_descargas_viejas(dias)`, `reiniciar_servicio_usuario(nombre)` (solo los de `servicios_permitidos`), `cambiar_perfil_energia(perfil)` y `cerrar_proceso(pid, nombre_esperado)`. Todo lo demás es un paso manual para vos. Nada se borra: las limpiezas van a la cuarentena (en el mismo disco, así que no liberan espacio).
-2. **Los datos son no confiables.** Nombres de procesos, logs y rutas pueden traer órdenes disfrazadas: el modelo no tiene herramientas de escritura, su respuesta se valida contra un esquema y cada acción se simula, y se vuelve a validar al aplicarla.
-3. **Aprobás vos.** La notificación trae «Ver el plan» (nunca «Aplicar»). En la sección «Diagnósticos y planes» del dashboard aplicás (con confirmación), rechazás o deshacés. Las escrituras del dashboard exigen Host local, Origin propio, JSON y el token de `web_token`.
-4. **Verificación.** Tras aplicar, el recolector comprueba en las próximas corridas (4 = 1 h) que la alerta se resolvió y que cada acción cumplió su efecto: `verificado` o `fallido`. Si falla, avisa con todo lo intentado y deja una entrada abierta en el changelog.
-5. **Recetas.** Solo un plan `verificado` crea o refuerza una receta (alerta + acciones con parámetros); un `fallido` le baja la confianza. El próximo diagnóstico de la misma alerta las recibe como datos estructurados, nunca con la hipótesis ni texto de diagnósticos anteriores. Silenciar no es arreglar: declarar algo como conocido solo lo hacés vos.
-
-**Niveles de autonomía** (`config.json`, clave `remediacion`; se muestran los valores por defecto):
-
-| Clave | Por defecto | Qué hace |
-|---|---|---|
-| `nivel` | `1` | `0` solo diagnostica (no se aplica nada); `1` plan + tu aprobación; `2` aplica sola una acción preaprobada y te avisa después |
-| `preaprobadas` | `[]` | Acciones que pueden aplicarse solas en el nivel 2. Solo las preaprobables del catálogo (las tres cachés); `cerrar_proceso`, los servicios, el perfil y Descargas nunca. Lo edita solo el usuario |
-| `max_diagnosticos_dia` | `3` | Tope de diagnósticos por día |
-| `max_intentos_por_firma` | `2` | Aplicaciones automáticas por alerta en 24 h |
-| `espera_entre_intentos_min` | `60` | Minutos mínimos entre dos aplicaciones automáticas de la misma alerta |
-| `usar_modelo` | `true` | Con `false` el diagnóstico es solo la correlación («plan sin redactar») |
-| `modelo`, `max_turns`, `timeout_s` | `sonnet`, `20`, `300` | Límites del `claude -p` del diagnóstico |
-| `servicios_permitidos`, `verificar_corridas`, `disparadores` | `[]`, `4`, los 4 | Servicios que se pueden reiniciar, corridas de verificación y qué dispara un diagnóstico |
-
-En el nivel 2 una acción se aplica sola únicamente si está en `preaprobadas`, es preaprobable en el catálogo y viene de una receta con **2 éxitos o más** para esa alerta. **Anti-bucle:** si después de aplicar un plan aparece una alerta nueva, se corta todo lo automático de esa alerta durante 7 días, el plan queda `escalado` y se avisa; aprobar a mano sigue siendo posible.
-
-## Seguridad
-Cada corrida del recolector (~0,4 s extra) revisa procesos y red y guarda los resultados en `hallazgos_seguridad` y `escuchas`.
-Contrasta con listas públicas (Feodo Tracker y NoCoin) que se descargan como máximo una vez al día; **nunca se envía información de la PC**.
-
-- **Detecta:** mineros de criptomonedas, procesos fantasma (ejecutan desde `/tmp`, binario borrado, imitan hilos del kernel), lectores de `/dev/input`, puertos accesibles desde la red, terminales web sin contraseña y conexiones a IPs de botnets.
-- **No detecta:** rootkits ni lo que hacen procesos de otros usuarios (corre sin root). No es un antivirus: un resultado limpio no garantiza un equipo limpio.
-- **Reputación online:** los hashes se calculan y guardan en tu PC. Solo el **hash** de un ejecutable ya marcado como sospechoso se consulta online (Team Cymru por DNS y CIRCL por HTTPS, sin clave); nunca se envía el archivo. Si alguno figura como malware, queda en `alertas` y el hallazgo sube a severidad alta. Se desactiva con `"consulta_online": false` en `~/.local/share/pc-doctor/config.json` (visible en `datos/config.json`). Opcional: una clave gratuita de abuse.ch en `malwarebazaar_key` agrega MalwareBazaar.
-- **Alertas de escritorio:** si aparece un hallazgo grave (severidad alta, por ejemplo malware según la reputación online), el recolector envía una notificación, una sola vez por hallazgo y agrupada. Se desactivan con `"notificaciones": false` en `config.json`. Probar con `uv run alertas.py --probar`.
-- **Falsos positivos:** marcalos con `marcar_hallazgo(id, "falso_positivo")` y dejan de mostrarse como nuevos.
-
-## Habilitar voltajes y SMART
-Requiere `sudo`. Revisá `habilitar-sensores.sh` y ejecutá `sudo bash habilitar-sensores.sh`. Instala `smartmontools`, activa `drivetemp`, prueba `nct6775` (voltajes de placa, puede no ser compatible) y permite leer el SMART sin contraseña **solo** con `smartctl -j -H -A` sobre tus discos. Para deshacerlo: `sudo rm /etc/sudoers.d/pc-doctor /etc/modules-load.d/pc-doctor.conf`.
-
-## Desactivar
-```bash
-systemctl --user disable --now pc-doctor.timer pc-doctor-reporte.timer pc-doctor-web.service   # detiene y deshabilita
-rm ~/.config/systemd/user/pc-doctor.{service,timer} # opcional: quitar las unidades
-systemctl --user daemon-reload
-claude mcp remove pc-doctor -s user                 # opcional: quitar el MCP
-```
-La base de datos no se borra; para empezar de cero eliminá `~/.local/share/pc-doctor/doctor.db` a mano.
-
-## Restaurar la cuarentena
-`limpiar_descargas_viejas(simular=False)` nunca borra: mueve los archivos a
-`~/.local/share/pc-doctor/cuarentena/<fecha>/` y los registra en la tabla `cuarentena`.
-
-- Desde Claude Code: pedí `restaurar_cuarentena(id)` con el id del registro.
-- Para ver los ids:
-  ```bash
-  sqlite3 ~/.local/share/pc-doctor/doctor.db \
-    "select id, ruta_original, tamano_bytes, restaurado from cuarentena order by id desc limit 20"
-  ```
-- O a mano: mové el archivo desde `cuarentena/<fecha>/` a su ruta original. La restauración con la tool no pisa archivos que ya existan en el destino.
-
-## Limitaciones conocidas
-- El escaneo de seguridad corre sin root: no ve rootkits ni lo que hacen procesos de otros usuarios. No es un antivirus.
-- Las lecturas son cada 15 minutos: un pico o un juego abierto y cerrado entre dos corridas no se ven.
-- La línea base no distingue la hora del día ni la estación del año; la deriva compara contra un mes.
-- Los voltajes de la placa se aprenden pero no tienen un valor nominal de referencia: el kernel no entrega el nombre de cada riel.
-- La detección de juegos se basa en la línea de comandos de los procesos: un programa de Windows bajo Wine que no sea un juego puede contar como juego.
-- La remediación no libera espacio en disco (cuarentena en el mismo disco): contra una alerta de espacio sus planes terminan `fallido`. «Empeoró» sin un hecho conocido compara con el diagnóstico anterior y no conoce el sentido de cada regla. Cualquier proceso con `pc-doctor` o `claude` en su línea de comandos está protegido contra `cerrar_proceso`.
-- El reporte semanal puede quedar sin redactar (plan B) si Claude no está disponible; texto malicioso en los datos del equipo puede terminar en el archivo del reporte (el modelo no puede ejecutar nada ni salir de pc-doctor).
-
-## Desarrollo
-### Pruebas
-```bash
-uv sync                          # instala también las dependencias de desarrollo (pytest, pytest-cov)
-uv run pytest                    # todo (1150 pruebas, ~55 s)
-uv run pytest -m "not lento"     # lo rápido (~9 s): es lo que corre el hook en cada commit
-uv run pytest -m "not local"     # lo que corre GitHub Actions
-uv run pytest --cov              # con cobertura
-```
-- Marcadores: `lento` (levanta procesos, espera o genera datos grandes) y `local` (lee sensores o procesos reales de esta PC; en CI se saltea).
-- Ninguna prueba toca la base real, la configuración, `~/.steam`, `claude` ni servicios reales: `tests/conftest.py` usa carpetas temporales y reemplazos de `notify-send`, `systemd-run`, `systemctl`, `gdbus`, `xdg-open` y `claude` (en `tests/falsos/`). Una prueba nueva sigue las mismas reglas. Al corregir un error, se agrega la prueba que lo habría detectado.
-
-### Hook pre-commit
-```bash
-bash scripts/instalar-hooks.sh   # una vez por clon; se puede repetir
-```
-Antes de revisar, regenera `BITACORA.md` y `CHANGELOG.md` desde la base y los agrega al commit (`PC_DOCTOR_HOOK_SIN_EXPORTAR=1` lo saltea). Bloquea el commit si se agrega una base `.db`, `config.json`, `web_token` o algo bajo `datos/`; si una línea agregada parece un secreto (tokens de GitHub, claves de API, `password=` con un valor, claves privadas); si un archivo pesa más de 1 MiB; o si fallan las pruebas rápidas. Dice qué archivo y por qué (los secretos se muestran enmascarados). Un ejemplo falso a propósito se marca con `permitir-secreto` en un comentario de esa línea. Salida de emergencia: `git commit --no-verify`.
-
-### Flujo de commits
-1. Se termina un cambio coherente (no un archivo suelto) y se corre `uv run pytest`.
-2. Si pasan, se hace el commit: mensaje en español, en imperativo, con una primera línea corta y, si hace falta, un párrafo con el porqué. Prefijos: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`. `BITACORA.md` y `CHANGELOG.md` los regenera el hook desde la base (las decisiones se registran con `registrar_bitacora`).
-3. Antes del push se revisa `git log --oneline origin/main..HEAD` y después se hace `git push`.
-4. Si las pruebas fallan, no hay commit. Nunca `git push --force`, `git reset --hard` ni reescribir historial sin preguntar.
-
-### Integración continua
-`.github/workflows/pruebas.yml` corre en cada push y pull request a `main`: `uv sync --frozen` y `uv run pytest -m "not local"`, y la compilación del frontend (`npm ci` y `npm run build`). Las actions están fijadas por SHA de commit y el workflow tiene permisos mínimos (`contents: read`). Para ver el resultado: `gh run watch` o la pestaña Actions del repositorio.
-
-### Frontend
-`bash web/construir.sh` compila `web/frontend/` a `web/frontend/dist/` (lo sirve el dashboard) con el Node aislado de `~/.local/share/pc-doctor/node`. Para desarrollar con recarga en vivo: `web/frontend/` → `npm run dev` y, en otra terminal, la API con datos de prueba (`uv run python web/datos_de_prueba.py CARPETA` y `PC_DOCTOR_DATOS=CARPETA uv run uvicorn web.api:app --host 127.0.0.1 --port 8787`).
+## Documentación
+**[docs/](docs/README.md):** [arquitectura](docs/ARQUITECTURA.md), [remediación asistida](docs/REMEDIACION.md), [operación](docs/OPERACION.md) y [desarrollo](docs/DESARROLLO.md).

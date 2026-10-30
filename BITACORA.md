@@ -1740,3 +1740,21 @@ _2026-10-29 · nota_
 
 <!-- item {"id":443,"tipo":"pendiente","vigencia":"vigente","fecha":"2026-10-29","resumen":"Editar preaprobadas y nivel desde el dashboard, y levantar un corte por bucle antes de que venza","modulos":["dashboard","remediacion"]} -->
 - Hoy la autonomía solo se edita en config.json: un endpoint que la cambie es otra superficie de escritura, y se decidió no hacerlo sin pedido. Tampoco hay comando para levantar un corte de `cortes_auto`.
+
+## Documentación: README corto y docs/
+
+### Decisiones
+_2026-10-29 · decision_
+<!-- entrada {"id":126,"seccion":"Documentación: README corto y docs/","titulo":"Decisiones","fecha":"2026-10-29","tipo":"decision"} -->
+
+<!-- item {"id":444,"tipo":"decision","vigencia":"vigente","fecha":"2026-10-29","resumen":"README corto de presentación; lo técnico vive en docs/ (arquitectura, remediación, operación, desarrollo)","modulos":["dashboard","git"],"archivos":["CLAUDE.md","README.md","docs/ARQUITECTURA.md","docs/DESARROLLO.md","docs/OPERACION.md","docs/README.md","docs/REMEDIACION.md","modulos.py"]} -->
+- `README.md` (~210 líneas): qué hace, ejemplos de conversación, captura del dashboard, tres diagramas Mermaid con una misma paleta, privacidad, instalación mínima, stack y próximamente (sale de `pendientes()`). El contenido técnico anterior se movió sin pérdida a `docs/ARQUITECTURA.md`, `REMEDIACION.md`, `OPERACION.md` y `DESARROLLO.md`, con `docs/README.md` de índice; `CLAUDE.md` apunta a `docs/ARQUITECTURA.md`.
+  - Regla: ni el README ni docs/ llevan datos de la PC del autor (rutas, discos, hardware, juegos). Se quitó el párrafo de hallazgos de esta PC (está en `CHANGELOG.md`).
+  - Los datos de `web/datos_de_prueba.py` y las lecturas de `tests/ayudas.py` traen nombres reales del equipo del autor: la captura `docs/img/dashboard.jpg` se generó con un servidor temporal que los reemplaza por genéricos y con sensores y juego sintéticos. Quien regenere la captura debe hacer lo mismo y revisarla.
+
+### Pendientes
+_2026-10-29 · nota_
+<!-- entrada {"id":127,"seccion":"Documentación: README corto y docs/","titulo":"Pendientes","fecha":"2026-10-29","tipo":"nota"} -->
+
+<!-- item {"id":445,"tipo":"pendiente","vigencia":"vigente","fecha":"2026-10-29","resumen":"Validar los cuatro diagramas Mermaid del README con el parser oficial o viéndolos en GitHub","modulos":["git"],"archivos":["README.md"]} -->
+- Solo se chequearon con un lint propio (subgrafos cerrados, classDef definidos, comillas): no hay Mermaid instalado. Verlos en GitHub tras el push y corregir lo que falle.

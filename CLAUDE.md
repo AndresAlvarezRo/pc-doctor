@@ -1,6 +1,6 @@
 # pc-doctor
 
-Diagnóstico de la PC (Zorin OS 18 / Ubuntu 24.04): recolector, servidor MCP y dashboard local. La arquitectura y los módulos están en `README.md`.
+Diagnóstico de la PC (Zorin OS 18 / Ubuntu 24.04): recolector, servidor MCP y dashboard local. La arquitectura y los módulos están en `docs/ARQUITECTURA.md`.
 
 ## Convenciones
 - Todo el código, comentarios y docstrings van en español.
